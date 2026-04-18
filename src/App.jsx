@@ -1,4 +1,3 @@
-// GridBot v2 - clients from DB
 import { useState, useEffect, useRef, useCallback } from "react";
 
 // ─── Backend API URL ──────────────────────────────────────────────────────────

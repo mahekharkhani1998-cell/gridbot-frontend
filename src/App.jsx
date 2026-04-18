@@ -1326,14 +1326,7 @@ const NAV = [
   {id:"demo",       label:"Demo trade",  icon:"▷"},
   {id:"orders",     label:"Orders",      icon:"≡"},
 ];
-const YOUR_CLIENT = {
-  id:"C1109586852", name:"Owner", broker:"Dhan", segment:"NSE_EQ",
-  note:"Primary trading account · Dhan client ID 1109586852",
-  credentials:{ client_id:"1109586852", access_token:"", api_key:"", api_secret:"", secret_key:"", totp_secret:"" },
-  active:true,
-  added:new Date().toLocaleString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",year:"numeric"}),
-  bots:0, pnl:0,
-};
+// No hardcoded clients — all clients load from backend database
 
 export default function App() {
   const [user, setUser]         = useState(null);
@@ -1679,7 +1672,7 @@ export default function App() {
                         </Btn>
                         <Btn variant="ghost" onClick={()=>{ setEditClient(c); setShowAddClient(true); }}
                           style={{ flex:1,padding:"7px 0",fontSize:12 }}>Edit</Btn>
-                        {c.id!==YOUR_CLIENT.id&&(
+                        {(
                           <Btn variant="danger" onClick={()=>removeClient(c.id)} style={{ flex:1,padding:"7px 0",fontSize:12 }}>Remove</Btn>
                         )}
                       </div>

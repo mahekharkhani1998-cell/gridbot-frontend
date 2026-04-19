@@ -1482,6 +1482,255 @@ function OrdersTab({ clients, filter, onFilterChange }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+//  LOGS TAB — terminal/table toggle, level + search filter
+// ═══════════════════════════════════════════════════════════════════════
+function LogsTab() {
+  const [logs, setLogs]       = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [level, setLevel]     = useState("");
+  const [query, setQuery]     = useState("");
+  const [view, setView]       = useState("terminal"); // "terminal" | "table"
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [stats, setStats]     = useState([]);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    const qs = new URLSearchParams({ limit: "500" });
+    if (level) qs.set("level", level);
+    if (query) qs.set("q", query);
+    apiCall("GET", `/api/logs?${qs}`).then(data => {
+      if (data?.ok) setLogs(data.logs || []);
+      setLoading(false);
+    });
+    apiCall("GET", "/api/logs/stats").then(data => {
+      if (data?.ok) setStats(data.last24h || []);
+    });
+  }, [level, query]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [autoRefresh, load]);
+
+  const levelColor = (l) => ({
+    error: C.red, warn: C.amber, info: C.blue, debug: C.muted, verbose: C.purple,
+  }[l] || C.muted);
+
+  const errs = stats.find(s => s.level === "error")?.n || 0;
+  const wrns = stats.find(s => s.level === "warn")?.n || 0;
+  const infs = stats.find(s => s.level === "info")?.n || 0;
+
+  return (
+    <div>
+      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:12 }}>
+        <div>
+          <h1 style={{ margin:0,fontSize:22,fontFamily:"'Syne',sans-serif",letterSpacing:"-.03em" }}>Backend logs</h1>
+          <p style={{ margin:"3px 0 0",fontSize:13,color:C.muted }}>
+            Last 24h: <span style={{color:C.red}}>{errs} err</span> · <span style={{color:C.amber}}>{wrns} warn</span> · <span style={{color:C.blue}}>{infs} info</span>
+          </p>
+        </div>
+        <div style={{ display:"flex",gap:8,alignItems:"center" }}>
+          <Btn variant={view==="terminal"?"primary":"ghost"} onClick={()=>setView("terminal")} style={{ padding:"6px 14px",fontSize:12 }}>Terminal</Btn>
+          <Btn variant={view==="table"?"primary":"ghost"} onClick={()=>setView("table")} style={{ padding:"6px 14px",fontSize:12 }}>Table</Btn>
+        </div>
+      </div>
+
+      {/* Filter bar */}
+      <div style={{ display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center" }}>
+        <select value={level} onChange={e=>setLevel(e.target.value)}
+          style={{ ...sInp,width:"auto",padding:"7px 12px" }}>
+          <option value="">All levels</option>
+          <option value="error">Error</option>
+          <option value="warn">Warn</option>
+          <option value="info">Info</option>
+          <option value="debug">Debug</option>
+        </select>
+        <input value={query} onChange={e=>setQuery(e.target.value)}
+          placeholder="Search messages…"
+          style={{ ...sInp, maxWidth:280, padding:"7px 12px" }}/>
+        <label style={{ display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.muted,cursor:"pointer" }}>
+          <input type="checkbox" checked={autoRefresh} onChange={e=>setAutoRefresh(e.target.checked)} />
+          Auto-refresh 5s
+        </label>
+        <Btn variant="ghost" onClick={load} style={{ padding:"5px 12px",fontSize:12 }}>Refresh now</Btn>
+        <span style={{ fontSize:11,color:C.muted,marginLeft:"auto" }}>
+          {loading ? "Loading…" : `${logs.length} entries`}
+        </span>
+      </div>
+
+      {view === "terminal" ? (
+        <div style={{ ...sCard, padding:0, overflow:"hidden" }}>
+          <div style={{ background:"#000", padding:"14px 16px", maxHeight:"calc(100vh - 280px)",
+                        overflowY:"auto", fontFamily:"'DM Mono',monospace", fontSize:12, lineHeight:1.55 }}>
+            {logs.length === 0 && (
+              <div style={{ color:C.muted, textAlign:"center", padding:"32px" }}>No log entries.</div>
+            )}
+            {logs.map(l => (
+              <div key={l.id} style={{ display:"flex",gap:10,padding:"2px 0",borderBottom:"1px solid rgba(255,255,255,.02)" }}>
+                <span style={{ color:"rgba(255,255,255,.3)",flexShrink:0 }}>{l.ist_timestamp}</span>
+                <span style={{ color:levelColor(l.level),flexShrink:0,width:50,textTransform:"uppercase",fontWeight:600 }}>
+                  {l.level}
+                </span>
+                <span style={{ color:"#e2e5f1",wordBreak:"break-word" }}>{l.message}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div style={sCard}>
+          <div style={{ overflowX:"auto",maxHeight:"calc(100vh - 280px)",overflowY:"auto" }}>
+            <table style={{ width:"100%",borderCollapse:"collapse",minWidth:700 }}>
+              <thead style={{ position:"sticky",top:0,background:C.card,zIndex:1 }}>
+                <tr style={{ borderBottom:`1px solid ${C.border}` }}>
+                  {["Time (IST)","Level","Message"].map(h=>(
+                    <th key={h} style={{ textAlign:"left",padding:"8px 10px",fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:".05em",fontWeight:500 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map(l => (
+                  <tr key={l.id} style={{ borderBottom:`1px solid rgba(255,255,255,.03)` }}>
+                    <td style={{ padding:"7px 10px",fontFamily:"'DM Mono',monospace",fontSize:11,color:C.muted,whiteSpace:"nowrap" }}>{l.ist_timestamp}</td>
+                    <td style={{ padding:"7px 10px" }}><span style={sBadge(levelColor(l.level))}>{l.level}</span></td>
+                    <td style={{ padding:"7px 10px",fontFamily:"'DM Mono',monospace",fontSize:12,wordBreak:"break-word" }}>{l.message}</td>
+                  </tr>
+                ))}
+                {logs.length === 0 && <tr><td colSpan={3} style={{ padding:"32px",textAlign:"center",color:C.muted }}>No log entries.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  ACCOUNT TAB — profile + change password
+// ═══════════════════════════════════════════════════════════════════════
+function AccountTab({ user, onUserUpdate }) {
+  const [profile, setProfile] = useState(null);
+  const [name, setName]       = useState("");
+  const [savingName, setSavingName] = useState(false);
+  const [nameMsg, setNameMsg] = useState("");
+
+  const [curPw, setCurPw]   = useState("");
+  const [newPw, setNewPw]   = useState("");
+  const [confPw, setConfPw] = useState("");
+  const [savingPw, setSavingPw] = useState(false);
+  const [pwMsg, setPwMsg]   = useState("");
+  const [pwErr, setPwErr]   = useState("");
+
+  useEffect(() => {
+    apiCall("GET", "/api/auth/me").then(data => {
+      if (data?.ok) {
+        setProfile(data.user);
+        setName(data.user.name || "");
+      }
+    });
+  }, []);
+
+  const saveName = async () => {
+    if (!name.trim()) return;
+    setSavingName(true); setNameMsg("");
+    const data = await apiCall("PUT", "/api/auth/profile", { name: name.trim() });
+    setSavingName(false);
+    if (data?.ok) {
+      setProfile(data.user);
+      onUserUpdate?.(data.user);
+      setNameMsg("✓ Name updated");
+      setTimeout(() => setNameMsg(""), 3000);
+    } else {
+      setNameMsg(`⚠ ${data?.error || "Update failed"}`);
+    }
+  };
+
+  const changePw = async () => {
+    setPwMsg(""); setPwErr("");
+    if (!curPw || !newPw || !confPw) { setPwErr("All fields required"); return; }
+    if (newPw !== confPw)            { setPwErr("New passwords do not match"); return; }
+    if (newPw.length < 8)            { setPwErr("New password must be at least 8 characters"); return; }
+    setSavingPw(true);
+    const data = await apiCall("POST", "/api/auth/password", { current_password: curPw, new_password: newPw });
+    setSavingPw(false);
+    if (data?.ok) {
+      setPwMsg("✓ Password updated successfully");
+      setCurPw(""); setNewPw(""); setConfPw("");
+      setTimeout(() => setPwMsg(""), 4000);
+    } else {
+      setPwErr(data?.error || "Could not update password");
+    }
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom:20 }}>
+        <h1 style={{ margin:0,fontSize:22,fontFamily:"'Syne',sans-serif",letterSpacing:"-.03em" }}>Account settings</h1>
+        <p style={{ margin:"3px 0 0",fontSize:13,color:C.muted }}>Profile & security</p>
+      </div>
+
+      <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(360px,1fr))",gap:16 }}>
+        {/* Profile card */}
+        <div style={sCard}>
+          <h3 style={{ margin:"0 0 14px",fontSize:14,fontFamily:"'Syne',sans-serif" }}>Profile</h3>
+          <div style={{ marginBottom:14 }}>
+            <label style={sLbl}>Email</label>
+            <input value={profile?.email || ""} disabled style={{ ...sInp, opacity:.5 }} />
+            <div style={{ fontSize:11,color:C.muted,marginTop:4 }}>Email cannot be changed</div>
+          </div>
+          <div style={{ marginBottom:14 }}>
+            <label style={sLbl}>Display name</label>
+            <input value={name} onChange={e=>setName(e.target.value)} style={sInp} />
+          </div>
+          <div style={{ marginBottom:14 }}>
+            <label style={sLbl}>Role</label>
+            <input value={profile?.role || "—"} disabled style={{ ...sInp, opacity:.5 }} />
+          </div>
+          <div style={{ marginBottom:14 }}>
+            <label style={sLbl}>Member since</label>
+            <input value={profile?.created_at ? new Date(profile.created_at).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}) : "—"}
+              disabled style={{ ...sInp, opacity:.5 }} />
+          </div>
+          <div style={{ display:"flex",gap:10,alignItems:"center" }}>
+            <Btn onClick={saveName} disabled={savingName || !name.trim() || name.trim() === profile?.name}
+              style={{ padding:"8px 18px",fontSize:13 }}>
+              {savingName ? "Saving…" : "Save profile"}
+            </Btn>
+            {nameMsg && <span style={{ fontSize:12, color: nameMsg.startsWith("✓") ? C.green : C.red }}>{nameMsg}</span>}
+          </div>
+        </div>
+
+        {/* Change password card */}
+        <div style={sCard}>
+          <h3 style={{ margin:"0 0 14px",fontSize:14,fontFamily:"'Syne',sans-serif" }}>Change password</h3>
+          <div style={{ marginBottom:14 }}>
+            <label style={sLbl}>Current password</label>
+            <input type="password" value={curPw} onChange={e=>setCurPw(e.target.value)} style={sInp} />
+          </div>
+          <div style={{ marginBottom:14 }}>
+            <label style={sLbl}>New password</label>
+            <input type="password" value={newPw} onChange={e=>setNewPw(e.target.value)} style={sInp} />
+            <div style={{ fontSize:11,color:C.muted,marginTop:4 }}>At least 8 characters</div>
+          </div>
+          <div style={{ marginBottom:14 }}>
+            <label style={sLbl}>Confirm new password</label>
+            <input type="password" value={confPw} onChange={e=>setConfPw(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&changePw()} style={sInp} />
+          </div>
+          {pwErr && <div style={{ background:"rgba(255,69,96,.08)",border:"1px solid rgba(255,69,96,.2)",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:C.red }}>{pwErr}</div>}
+          {pwMsg && <div style={{ background:"rgba(0,201,122,.08)",border:"1px solid rgba(0,201,122,.2)",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:C.green }}>{pwMsg}</div>}
+          <Btn onClick={changePw} disabled={savingPw} style={{ padding:"8px 18px",fontSize:13 }}>
+            {savingPw ? "Updating…" : "Update password"}
+          </Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 //  MAIN APP
 // ═══════════════════════════════════════════════════════════════════════
 const STATUS_COL = {RUNNING:C.green,PAUSED:C.amber,STOPPED:C.red,IDLE:"rgba(255,255,255,.4)"};
@@ -1494,6 +1743,8 @@ const NAV = [
   {id:"limits",     label:"Limit window",icon:"◷"},
   {id:"demo",       label:"Demo trade",  icon:"▷"},
   {id:"orders",     label:"Orders",      icon:"≡"},
+  {id:"logs",       label:"Logs",        icon:"☰"},
+  {id:"account",    label:"Account",     icon:"⊚"},
 ];
 // No hardcoded clients — all clients load from backend database
 
@@ -1521,8 +1772,8 @@ export default function App() {
   useEffect(()=>{
     const token = getToken();
     if (token) {
-      apiCall("GET", "/health").then(data => {
-        if (data) setUser({ name: "Admin" });
+      apiCall("GET", "/api/auth/me").then(data => {
+        if (data?.ok && data.user) setUser(data.user);
         else clearToken();
         setAuthChecked(true);
       });
@@ -2047,6 +2298,8 @@ export default function App() {
           {tab==="demo"      && <DemoTab/>}
 
           {tab==="orders" && <OrdersTab clients={clients} filter={orderFilter} onFilterChange={setOrderFilter} />}
+          {tab==="logs"    && <LogsTab/>}
+          {tab==="account" && <AccountTab user={user} onUserUpdate={setUser}/>}
         </div>
       </div>
 

@@ -877,6 +877,12 @@ function HoldingsTab({ clients }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // If clients arrives after mount (page refreshed directly on this tab),
+  // auto-select the first client.
+  useEffect(() => {
+    if (!selClient && clients.length) setSelClient(clients[0].id);
+  }, [clients, selClient]);
+
   useEffect(()=>{
     if (!selClient) return;
     setLoading(true); setError("");
@@ -977,6 +983,10 @@ function PositionsTab({ clients }) {
   const [positions, setPositions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!selClient && clients.length) setSelClient(clients[0].id);
+  }, [clients, selClient]);
 
   useEffect(()=>{
     if (!selClient) return;
@@ -1364,6 +1374,10 @@ function OrdersTab({ clients, filter, onFilterChange }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
+
+  useEffect(() => {
+    if (!selClient && clients.length) setSelClient(clients[0].id);
+  }, [clients, selClient]);
 
   const load = useCallback(() => {
     if (!selClient) { setOrders([]); return; }

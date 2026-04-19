@@ -872,29 +872,24 @@ function KillSwitchModal({ open, onClose, onKillAll, onKillBot, bots }) {
 //  HOLDINGS TAB
 // ═══════════════════════════════════════════════════════════════════════
 function HoldingsTab({ clients }) {
-  const [selClient, setSelClient] = useState(clients[0]?.id||"");
+  const [selClient, setSelClient]   = useState("");      // dropdown value
+  const [activeClient, setActiveClient] = useState(""); // the one we actually fetched
   const [holdings, setHoldings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // If clients arrives after mount (page refreshed directly on this tab),
-  // auto-select the first client.
-  useEffect(() => {
-    if (!selClient && clients.length) setSelClient(clients[0].id);
-  }, [clients, selClient]);
-
-  useEffect(()=>{
+  const submit = () => {
     if (!selClient) return;
-    setLoading(true); setError("");
-    apiCall("GET", `/api/clients/${selClient}/holdings`).then(data=>{
+    setActiveClient(selClient);
+    setLoading(true); setError(""); setHoldings([]);
+    apiCall("GET", `/api/clients/${selClient}/holdings`).then(data => {
       if (data?.ok) {
-        // Backend returns normalized shape — no field-name guessing needed.
-        const mapped = (data.holdings||[]).map(h=>({
+        const mapped = (data.holdings || []).map(h => ({
           script:   h.tradingSymbol,
           sid:      h.securityId,
           isin:     h.isin || "—",
           buyQty:   h.totalQty,
-          sellQty:  0, // holdings have no sell qty; that's a positions concept
+          sellQty:  0,
           buyRate:  h.avgCostPrice,
           sellRate: 0,
           netQty:   h.availableQty || h.totalQty,
@@ -904,39 +899,67 @@ function HoldingsTab({ clients }) {
         }));
         setHoldings(mapped);
       } else {
-        setError(data?.error||"Could not fetch holdings. Check your Dhan access token.");
+        setError(data?.error || "Could not fetch holdings. Check your Dhan access token.");
       }
       setLoading(false);
-    }).catch(()=>{ setError("Network error"); setLoading(false); });
-  },[selClient]);
+    }).catch(() => { setError("Network error"); setLoading(false); });
+  };
 
-  const totalPnl = holdings.reduce((s,h)=>s+h.pnl, 0);
+  const reset = () => {
+    setSelClient(""); setActiveClient(""); setHoldings([]); setError("");
+  };
+
+  const totalPnl  = holdings.reduce((s,h)=>s+h.pnl, 0);
+  const activeName = clients.find(c => c.id === activeClient)?.name || "";
 
   return (
     <div>
-      <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12 }}>
-        <div>
-          <h1 style={{ margin:0,fontSize:22,fontFamily:"'Syne',sans-serif",letterSpacing:"-.03em" }}>Holdings</h1>
-          <p style={{ margin:"3px 0 0",fontSize:13,color:C.muted }}>Live CNC delivery positions from Dhan · IST</p>
-        </div>
-        <div style={{ display:"flex",gap:12,alignItems:"center" }}>
+      <div style={{ marginBottom:16 }}>
+        <h1 style={{ margin:0,fontSize:22,fontFamily:"'Syne',sans-serif",letterSpacing:"-.03em" }}>Holdings</h1>
+        <p style={{ margin:"3px 0 0",fontSize:13,color:C.muted }}>Live CNC delivery positions from Dhan · IST</p>
+      </div>
+
+      {/* Select User card */}
+      <div style={{ ...sCard, marginBottom:16 }}>
+        <h3 style={{ margin:"0 0 12px",fontSize:14,fontWeight:600,color:C.text }}>Select User</h3>
+        <div style={{ display:"flex",gap:10,alignItems:"center",flexWrap:"wrap" }}>
           <select value={selClient} onChange={e=>setSelClient(e.target.value)}
-            style={{ ...sInp,width:"auto",padding:"8px 14px" }}>
-            {clients.map(c=><option key={c.id} value={c.id}>{c.name} · {c.broker}</option>)}
+            style={{ ...sInp, maxWidth:340 }}>
+            <option value="">Select User</option>
+            {clients.map(c => <option key={c.id} value={c.id}>{c.name} · {c.broker}</option>)}
           </select>
-          <div style={{ background:"rgba(0,201,122,.07)",border:"1px solid rgba(0,201,122,.2)",
-            borderRadius:9,padding:"8px 16px",textAlign:"right" }}>
-            <div style={{ fontSize:10,color:C.muted }}>Total P&L</div>
-            <div style={{ fontSize:18,fontWeight:700,fontFamily:"'DM Mono',monospace",
-              color:totalPnl>=0?C.green:C.red }}>
-              {totalPnl>=0?"+":""}₹{Math.abs(totalPnl).toLocaleString("en-IN",{maximumFractionDigits:2})}
+          <Btn onClick={submit} disabled={!selClient || loading}
+            style={{ padding:"9px 22px",fontSize:13 }}>
+            {loading ? "Loading…" : "Submit"}
+          </Btn>
+          <Btn variant="danger" onClick={reset} style={{ padding:"9px 22px",fontSize:13 }}>
+            Reset
+          </Btn>
+          {activeClient && (
+            <div style={{ marginLeft:"auto",background:"rgba(0,201,122,.07)",border:"1px solid rgba(0,201,122,.2)",
+              borderRadius:9,padding:"8px 16px",textAlign:"right" }}>
+              <div style={{ fontSize:10,color:C.muted }}>Total P&L · {activeName}</div>
+              <div style={{ fontSize:18,fontWeight:700,fontFamily:"'DM Mono',monospace",
+                color:totalPnl>=0?C.green:C.red }}>
+                {totalPnl>=0?"+":""}₹{Math.abs(totalPnl).toLocaleString("en-IN",{maximumFractionDigits:2})}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
+
       {error && <div style={{ background:"rgba(255,69,96,.08)",border:"1px solid rgba(255,69,96,.2)",borderRadius:8,padding:"12px 16px",marginBottom:16,fontSize:13,color:C.red }}>⚠ {error}</div>}
       {loading && <div style={{ textAlign:"center",padding:"40px",color:C.muted }}>Fetching holdings from Dhan...</div>}
-      {!loading && (
+
+      {/* Empty state — no client picked yet */}
+      {!loading && !activeClient && !error && (
+        <div style={{ ...sCard, textAlign:"center", padding:"52px 24px", color:C.muted }}>
+          <div style={{ fontSize:34,marginBottom:12,opacity:.25 }}>▦</div>
+          <div style={{ fontSize:14 }}>Pick a user above and click Submit to view holdings.</div>
+        </div>
+      )}
+
+      {!loading && activeClient && (
         <div style={sCard}>
           <div style={{ overflowX:"auto" }}>
             <table style={{ width:"100%",borderCollapse:"collapse",minWidth:720 }}>
@@ -979,64 +1002,91 @@ function HoldingsTab({ clients }) {
 //  POSITIONS TAB
 // ═══════════════════════════════════════════════════════════════════════
 function PositionsTab({ clients }) {
-  const [selClient, setSelClient] = useState(clients[0]?.id||"");
+  const [selClient, setSelClient]       = useState("");
+  const [activeClient, setActiveClient] = useState("");
   const [positions, setPositions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    if (!selClient && clients.length) setSelClient(clients[0].id);
-  }, [clients, selClient]);
-
-  useEffect(()=>{
+  const submit = () => {
     if (!selClient) return;
-    setLoading(true); setError("");
-    apiCall("GET", `/api/clients/${selClient}/positions`).then(data=>{
+    setActiveClient(selClient);
+    setLoading(true); setError(""); setPositions([]);
+    apiCall("GET", `/api/clients/${selClient}/positions`).then(data => {
       if (data?.ok) {
-        const mapped = (data.positions||[]).map(p=>({
+        const mapped = (data.positions || []).map(p => ({
           script:   p.tradingSymbol,
           sid:      p.securityId,
-          type:     p.type,             // backend already classifies EQ/FUT/OPT
+          type:     p.type,
           buyQty:   p.buyQty,
           sellQty:  p.sellQty,
           buyRate:  p.buyAvg,
           sellRate: p.sellAvg,
           netQty:   p.netQty,
-          pnl:      p.pnl,              // realized + unrealized
+          pnl:      p.pnl,
           ltp:      p.lastTradedPrice,
         }));
         setPositions(mapped);
       } else {
-        setError(data?.error||"Could not fetch positions.");
+        setError(data?.error || "Could not fetch positions.");
       }
       setLoading(false);
-    }).catch(()=>{ setError("Network error"); setLoading(false); });
-  },[selClient]);
+    }).catch(() => { setError("Network error"); setLoading(false); });
+  };
 
-  const totalPnl = positions.reduce((s,p)=>s+p.pnl,0);
+  const reset = () => {
+    setSelClient(""); setActiveClient(""); setPositions([]); setError("");
+  };
+
+  const totalPnl   = positions.reduce((s,p)=>s+p.pnl,0);
+  const activeName = clients.find(c => c.id === activeClient)?.name || "";
 
   return (
     <div>
-      <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12 }}>
-        <div>
-          <h1 style={{ margin:0,fontSize:22,fontFamily:"'Syne',sans-serif",letterSpacing:"-.03em" }}>Positions</h1>
-          <p style={{ margin:"3px 0 0",fontSize:13,color:C.muted }}>Live intraday + carry-forward from Dhan · IST</p>
-        </div>
-        <div style={{ display:"flex",gap:12,alignItems:"center" }}>
-          <select value={selClient} onChange={e=>setSelClient(e.target.value)} style={{ ...sInp,width:"auto",padding:"8px 14px" }}>
-            {clients.map(c=><option key={c.id} value={c.id}>{c.name} · {c.broker}</option>)}
+      <div style={{ marginBottom:16 }}>
+        <h1 style={{ margin:0,fontSize:22,fontFamily:"'Syne',sans-serif",letterSpacing:"-.03em" }}>Positions</h1>
+        <p style={{ margin:"3px 0 0",fontSize:13,color:C.muted }}>Live intraday + carry-forward from Dhan · IST</p>
+      </div>
+
+      {/* Select User card */}
+      <div style={{ ...sCard, marginBottom:16 }}>
+        <h3 style={{ margin:"0 0 12px",fontSize:14,fontWeight:600,color:C.text }}>Select User</h3>
+        <div style={{ display:"flex",gap:10,alignItems:"center",flexWrap:"wrap" }}>
+          <select value={selClient} onChange={e=>setSelClient(e.target.value)}
+            style={{ ...sInp, maxWidth:340 }}>
+            <option value="">Select User</option>
+            {clients.map(c => <option key={c.id} value={c.id}>{c.name} · {c.broker}</option>)}
           </select>
-          <div style={{ background:"rgba(0,201,122,.07)",border:"1px solid rgba(0,201,122,.2)",borderRadius:9,padding:"8px 16px" }}>
-            <div style={{ fontSize:10,color:C.muted }}>Unrealized P&L</div>
-            <div style={{ fontSize:18,fontWeight:700,fontFamily:"'DM Mono',monospace",color:totalPnl>=0?C.green:C.red }}>
-              {totalPnl>=0?"+":""}₹{Math.abs(totalPnl).toLocaleString("en-IN")}
+          <Btn onClick={submit} disabled={!selClient || loading}
+            style={{ padding:"9px 22px",fontSize:13 }}>
+            {loading ? "Loading…" : "Submit"}
+          </Btn>
+          <Btn variant="danger" onClick={reset} style={{ padding:"9px 22px",fontSize:13 }}>
+            Reset
+          </Btn>
+          {activeClient && (
+            <div style={{ marginLeft:"auto",background:"rgba(0,201,122,.07)",border:"1px solid rgba(0,201,122,.2)",
+              borderRadius:9,padding:"8px 16px" }}>
+              <div style={{ fontSize:10,color:C.muted }}>Unrealized P&L · {activeName}</div>
+              <div style={{ fontSize:18,fontWeight:700,fontFamily:"'DM Mono',monospace",color:totalPnl>=0?C.green:C.red }}>
+                {totalPnl>=0?"+":""}₹{Math.abs(totalPnl).toLocaleString("en-IN")}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
+
       {error && <div style={{ background:"rgba(255,69,96,.08)",border:"1px solid rgba(255,69,96,.2)",borderRadius:8,padding:"12px 16px",marginBottom:16,fontSize:13,color:C.red }}>⚠ {error}</div>}
       {loading && <div style={{ textAlign:"center",padding:"40px",color:C.muted }}>Fetching positions from Dhan...</div>}
-      {!loading && (
+
+      {!loading && !activeClient && !error && (
+        <div style={{ ...sCard, textAlign:"center", padding:"52px 24px", color:C.muted }}>
+          <div style={{ fontSize:34,marginBottom:12,opacity:.25 }}>◫</div>
+          <div style={{ fontSize:14 }}>Pick a user above and click Submit to view positions.</div>
+        </div>
+      )}
+
+      {!loading && activeClient && (
         <div style={sCard}>
           <div style={{ overflowX:"auto" }}>
             <table style={{ width:"100%",borderCollapse:"collapse",minWidth:720 }}>
@@ -1369,20 +1419,17 @@ function DemoTab() {
 //  ORDERS TAB
 // ═══════════════════════════════════════════════════════════════════════
 function OrdersTab({ clients, filter, onFilterChange }) {
-  const [selClient, setSelClient] = useState(clients[0]?.id || "");
+  const [selClient, setSelClient]       = useState("");
+  const [activeClient, setActiveClient] = useState("");
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
 
-  useEffect(() => {
-    if (!selClient && clients.length) setSelClient(clients[0].id);
-  }, [clients, selClient]);
-
-  const load = useCallback(() => {
-    if (!selClient) { setOrders([]); return; }
+  const load = useCallback((id) => {
+    if (!id) { setOrders([]); return; }
     setLoading(true); setError(""); setWarning("");
-    apiCall("GET", `/api/orders?client_id=${selClient}&source=both&limit=500`).then(data=>{
+    apiCall("GET", `/api/orders?client_id=${id}&source=both&limit=500`).then(data=>{
       if (data?.ok) {
         setOrders(data.orders || []);
         if (data.warning) setWarning(data.warning);
@@ -1391,55 +1438,92 @@ function OrdersTab({ clients, filter, onFilterChange }) {
       }
       setLoading(false);
     }).catch(()=>{ setError("Network error"); setLoading(false); });
-  }, [selClient]);
+  }, []);
 
-  useEffect(()=>{ load(); }, [load]);
-  useEffect(()=>{
-    if (!selClient) return;
-    const t = setInterval(load, 10000); // refresh every 10s
+  // Auto-refresh every 10s once a client has been submitted
+  useEffect(() => {
+    if (!activeClient) return;
+    const t = setInterval(() => load(activeClient), 10000);
     return () => clearInterval(t);
-  }, [selClient, load]);
+  }, [activeClient, load]);
+
+  const submit = () => {
+    if (!selClient) return;
+    setActiveClient(selClient);
+    load(selClient);
+  };
+
+  const reset = () => {
+    setSelClient(""); setActiveClient(""); setOrders([]); setError(""); setWarning("");
+  };
 
   const filtered = filter === "ALL"
     ? orders
     : orders.filter(o => o.bucket === filter);
 
   const statusColor = (b) => b === "FILLED" ? C.green : b === "OPEN" ? C.amber : b === "CANCELLED" ? C.red : C.muted;
+  const activeName = clients.find(c => c.id === activeClient)?.name || "";
 
   return (
     <div>
-      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14,flexWrap:"wrap",gap:12 }}>
-        <div>
-          <h1 style={{ margin:0,fontSize:22,fontFamily:"'Syne',sans-serif",letterSpacing:"-.03em" }}>Order history</h1>
-          <p style={{ margin:"3px 0 0",fontSize:13,color:C.muted }}>Live broker orderbook + bot orders · IST · auto-refresh 10s</p>
-        </div>
-        <select value={selClient} onChange={e=>setSelClient(e.target.value)}
-          style={{ ...sInp,width:"auto",padding:"8px 14px" }}>
-          {clients.length === 0 && <option value="">No clients</option>}
-          {clients.map(c=><option key={c.id} value={c.id}>{c.name} · {c.broker}</option>)}
-        </select>
+      <div style={{ marginBottom:14 }}>
+        <h1 style={{ margin:0,fontSize:22,fontFamily:"'Syne',sans-serif",letterSpacing:"-.03em" }}>Order history</h1>
+        <p style={{ margin:"3px 0 0",fontSize:13,color:C.muted }}>
+          Live broker orderbook + bot orders · IST{activeClient ? " · auto-refresh 10s" : ""}
+        </p>
       </div>
 
-      <div style={{ display:"flex",gap:8,marginBottom:16,flexWrap:"wrap" }}>
-        {["ALL","FILLED","OPEN","CANCELLED"].map(f=>{
-          const n = f === "ALL" ? orders.length : orders.filter(o => o.bucket === f).length;
-          return (
-            <button key={f} onClick={()=>onFilterChange(f)} style={{
-              padding:"6px 14px",borderRadius:7,border:`1px solid`,
-              borderColor:filter===f?C.blue:C.hint,
-              background:filter===f?"rgba(66,133,255,.12)":"transparent",
-              color:filter===f?C.blue:C.muted,
-              cursor:"pointer",fontSize:12,fontWeight:500,fontFamily:"inherit" }}>
-              {f} {orders.length > 0 && <span style={{ opacity:.6,marginLeft:4 }}>({n})</span>}
-            </button>
-          );
-        })}
+      {/* Select User card */}
+      <div style={{ ...sCard, marginBottom:16 }}>
+        <h3 style={{ margin:"0 0 12px",fontSize:14,fontWeight:600,color:C.text }}>Select User</h3>
+        <div style={{ display:"flex",gap:10,alignItems:"center",flexWrap:"wrap" }}>
+          <select value={selClient} onChange={e=>setSelClient(e.target.value)}
+            style={{ ...sInp, maxWidth:340 }}>
+            <option value="">Select User</option>
+            {clients.map(c => <option key={c.id} value={c.id}>{c.name} · {c.broker}</option>)}
+          </select>
+          <Btn onClick={submit} disabled={!selClient || loading}
+            style={{ padding:"9px 22px",fontSize:13 }}>
+            {loading ? "Loading…" : "Submit"}
+          </Btn>
+          <Btn variant="danger" onClick={reset} style={{ padding:"9px 22px",fontSize:13 }}>
+            Reset
+          </Btn>
+          {activeClient && (
+            <span style={{ marginLeft:"auto",fontSize:12,color:C.muted }}>Showing orders for <span style={{color:C.text,fontWeight:600}}>{activeName}</span></span>
+          )}
+        </div>
       </div>
+
+      {activeClient && (
+        <div style={{ display:"flex",gap:8,marginBottom:16,flexWrap:"wrap" }}>
+          {["ALL","FILLED","OPEN","CANCELLED"].map(f=>{
+            const n = f === "ALL" ? orders.length : orders.filter(o => o.bucket === f).length;
+            return (
+              <button key={f} onClick={()=>onFilterChange(f)} style={{
+                padding:"6px 14px",borderRadius:7,border:`1px solid`,
+                borderColor:filter===f?C.blue:C.hint,
+                background:filter===f?"rgba(66,133,255,.12)":"transparent",
+                color:filter===f?C.blue:C.muted,
+                cursor:"pointer",fontSize:12,fontWeight:500,fontFamily:"inherit" }}>
+                {f} {orders.length > 0 && <span style={{ opacity:.6,marginLeft:4 }}>({n})</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {error   && <div style={{ background:"rgba(255,69,96,.08)",border:"1px solid rgba(255,69,96,.2)",borderRadius:8,padding:"12px 16px",marginBottom:16,fontSize:13,color:C.red }}>⚠ {error}</div>}
       {warning && <div style={{ background:"rgba(245,166,35,.08)",border:"1px solid rgba(245,166,35,.25)",borderRadius:8,padding:"12px 16px",marginBottom:16,fontSize:13,color:C.amber }}>⚠ {warning}</div>}
 
-      {loading && orders.length === 0 ? (
+      {!activeClient && !error && (
+        <div style={{ ...sCard, textAlign:"center", padding:"52px 24px", color:C.muted }}>
+          <div style={{ fontSize:34,marginBottom:12,opacity:.25 }}>≡</div>
+          <div style={{ fontSize:14 }}>Pick a user above and click Submit to view orders.</div>
+        </div>
+      )}
+
+      {activeClient && (loading && orders.length === 0 ? (
         <div style={{ textAlign:"center",padding:"40px",color:C.muted }}>Fetching orders…</div>
       ) : (
         <div style={sCard}>
@@ -1490,7 +1574,7 @@ function OrdersTab({ clients, filter, onFilterChange }) {
             </table>
           </div>
         </div>
-      )}
+      ))}
     </div>
   );
 }

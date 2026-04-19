@@ -1765,7 +1765,8 @@ function OrderForm({ value, onChange, idx = 0, onRemove = null }) {
   useEffect(() => {
     const allowed = PRODUCT_BY_SEGMENT[exchange] || ["CNC"];
     if (!allowed.includes(product)) setProduct(allowed[0]);
-  }, [exchange]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
+  }, [exchange]);
 
   // Push payload up whenever anything changes
   useEffect(() => {

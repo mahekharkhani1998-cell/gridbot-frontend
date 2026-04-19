@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
 // ─── Backend API URL ──────────────────────────────────────────────────────────
-const API_URL = "https://gridbot-backend-production-f76e.up.railway.app";
+const API_URL = "https://gridbot.duckdns.org";
 
 // ─── API helper ───────────────────────────────────────────────────────────────
 const getToken = () => localStorage.getItem("gridbot_token");

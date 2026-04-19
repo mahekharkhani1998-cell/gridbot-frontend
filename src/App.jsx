@@ -1731,18 +1731,555 @@ function AccountTab({ user, onUserUpdate }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+//  ORDER FORM — segment-aware reusable form used by Single & Multi tabs
+//  Returns a payload via onChange(payload | null)
+// ═══════════════════════════════════════════════════════════════════════
+const PRODUCT_BY_SEGMENT = {
+  NSE_EQ:       ["CNC", "INTRADAY", "MTF", "MARGIN"],
+  BSE_EQ:       ["CNC", "INTRADAY", "MTF", "MARGIN"],
+  NSE_FNO:      ["INTRADAY", "MARGIN"],
+  BSE_FNO:      ["INTRADAY", "MARGIN"],
+  NSE_CURRENCY: ["INTRADAY", "MARGIN"],
+  BSE_CURRENCY: ["INTRADAY", "MARGIN"],
+  MCX_COMM:     ["INTRADAY", "MARGIN"],
+};
+
+function OrderForm({ value, onChange, idx = 0, onRemove = null }) {
+  const [exchange, setExchange]   = useState(value?.exchange || "NSE_EQ");
+  const [side, setSide]           = useState(value?.side || "BUY");
+  const [orderType, setOrderType] = useState(value?.order_type || "LIMIT");
+  const [product, setProduct]     = useState(value?.product || "CNC");
+  const [script, setScript]       = useState(value?.script || null); // {id, name, isin, lot}
+  const [lots, setLots]           = useState(value?.lots || 1);
+  const [qty, setQty]             = useState(value?.qty || 1);
+  const [price, setPrice]         = useState(value?.price || "");
+
+  const isFNO   = exchange === "NSE_FNO" || exchange === "BSE_FNO";
+  const isComm  = exchange === "MCX_COMM";
+  const isCurr  = exchange === "NSE_CURRENCY" || exchange === "BSE_CURRENCY";
+  const useLots = isFNO || isComm || isCurr;
+  const lotSize = script?.lot && script.lot > 0 ? script.lot : 1;
+  const totalQty = useLots ? Math.max(1, parseInt(lots) || 1) * lotSize : Math.max(1, parseInt(qty) || 1);
+
+  // Reset product when exchange changes
+  useEffect(() => {
+    const allowed = PRODUCT_BY_SEGMENT[exchange] || ["CNC"];
+    if (!allowed.includes(product)) setProduct(allowed[0]);
+  }, [exchange]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Push payload up whenever anything changes
+  useEffect(() => {
+    if (!script) { onChange(null); return; }
+    const payload = {
+      exchange,
+      security_id: script.id,
+      ticker:      script.name,
+      isin:        script.isin || "",
+      side, order_type: orderType, product,
+      qty: totalQty,
+      price: orderType === "LIMIT" ? parseFloat(price) || 0 : 0,
+      // metadata for UI
+      script, lots: useLots ? lots : null, lotSize,
+    };
+    onChange(payload);
+  }, [exchange, script, side, orderType, product, lots, qty, price, totalQty, useLots]); // eslint-disable-line
+
+  return (
+    <div style={{ ...sCard, padding:18, position:"relative" }}>
+      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14 }}>
+        <div style={{ fontSize:13,fontWeight:600,color:C.text }}>Order #{idx + 1}</div>
+        <div style={{ display:"flex",gap:6 }}>
+          <button onClick={()=>setSide("BUY")}
+            style={{ padding:"5px 14px",borderRadius:6,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit",
+              background: side==="BUY" ? C.green : "rgba(0,201,122,.08)",
+              color:      side==="BUY" ? "#fff" : C.green,
+              border:`1px solid ${side==="BUY" ? C.green : "rgba(0,201,122,.25)"}` }}>BUY</button>
+          <button onClick={()=>setSide("SELL")}
+            style={{ padding:"5px 14px",borderRadius:6,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit",
+              background: side==="SELL" ? C.red : "rgba(255,69,96,.08)",
+              color:      side==="SELL" ? "#fff" : C.red,
+              border:`1px solid ${side==="SELL" ? C.red : "rgba(255,69,96,.25)"}` }}>SELL</button>
+          <button onClick={()=>setOrderType("MARKET")}
+            style={{ padding:"5px 14px",borderRadius:6,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit",
+              background: orderType==="MARKET" ? C.blue : "rgba(66,133,255,.08)",
+              color:      orderType==="MARKET" ? "#fff" : C.blue,
+              border:`1px solid ${orderType==="MARKET" ? C.blue : "rgba(66,133,255,.25)"}` }}>MARKET</button>
+          <button onClick={()=>setOrderType("LIMIT")}
+            style={{ padding:"5px 14px",borderRadius:6,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit",
+              background: orderType==="LIMIT" ? C.amber : "rgba(245,166,35,.08)",
+              color:      orderType==="LIMIT" ? "#fff" : C.amber,
+              border:`1px solid ${orderType==="LIMIT" ? C.amber : "rgba(245,166,35,.25)"}` }}>LIMIT</button>
+          {onRemove && (
+            <button onClick={onRemove} title="Remove this order"
+              style={{ padding:"5px 10px",borderRadius:6,fontSize:14,cursor:"pointer",
+                background:"rgba(255,255,255,.04)",color:C.muted,border:`1px solid ${C.hint}`,fontFamily:"inherit" }}>×</button>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(170px, 1fr))",gap:12 }}>
+        <div>
+          <label style={sLbl}>Segment</label>
+          <select value={exchange} onChange={e=>{ setExchange(e.target.value); setScript(null); }} style={sInp}>
+            <option value="NSE_EQ">NSE Equity</option>
+            <option value="BSE_EQ">BSE Equity</option>
+            <option value="NSE_FNO">NSE F&O</option>
+            <option value="BSE_FNO">BSE F&O</option>
+            <option value="NSE_CURRENCY">NSE Currency</option>
+            <option value="BSE_CURRENCY">BSE Currency</option>
+            <option value="MCX_COMM">MCX Commodity</option>
+          </select>
+        </div>
+
+        <div style={{ gridColumn:"span 2",minWidth:240 }}>
+          <label style={sLbl}>Symbol</label>
+          <ScriptSearch exchange={exchange} value={script} onChange={setScript} />
+        </div>
+
+        <div>
+          <label style={sLbl}>Product</label>
+          <select value={product} onChange={e=>setProduct(e.target.value)} style={sInp}>
+            {(PRODUCT_BY_SEGMENT[exchange] || ["CNC"]).map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+
+        {useLots ? (
+          <div>
+            <label style={sLbl}>Quantity (lots)</label>
+            <input type="number" min={1} value={lots} onChange={e=>setLots(e.target.value)} style={sInp} />
+            <div style={{ fontSize:10,color:C.muted,marginTop:3 }}>
+              Lot size: {lotSize.toLocaleString("en-IN")} · Total qty: <span style={{color:C.text,fontWeight:600}}>{totalQty.toLocaleString("en-IN")}</span>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <label style={sLbl}>Quantity (shares)</label>
+            <input type="number" min={1} value={qty} onChange={e=>setQty(e.target.value)} style={sInp} />
+          </div>
+        )}
+
+        {orderType === "LIMIT" && (
+          <div>
+            <label style={sLbl}>Limit price (₹)</label>
+            <input type="number" step="0.05" min={0} value={price} onChange={e=>setPrice(e.target.value)} style={sInp} placeholder="0.00" />
+          </div>
+        )}
+      </div>
+
+      {script && (
+        <div style={{ marginTop:12,padding:"8px 12px",background:"rgba(66,133,255,.05)",border:"1px solid rgba(66,133,255,.12)",borderRadius:7,fontSize:11,color:C.muted,display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8 }}>
+          <span>SecID: <span style={{color:C.text,fontFamily:"'DM Mono',monospace"}}>{script.id}</span></span>
+          {script.isin && <span>ISIN: <span style={{color:C.text,fontFamily:"'DM Mono',monospace"}}>{script.isin}</span></span>}
+          <span style={{color:side==="BUY"?C.green:C.red,fontWeight:600}}>
+            {side} {totalQty.toLocaleString("en-IN")} {script.name} @ {orderType === "MARKET" ? "MARKET" : `₹${price || "—"}`}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  CLIENT BUCKETS TAB
+// ═══════════════════════════════════════════════════════════════════════
+function BucketsTab({ clients }) {
+  const [buckets, setBuckets] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [edit, setEdit] = useState(null);
+  const [name, setName] = useState("");
+  const [desc, setDesc] = useState("");
+  const [memberIds, setMemberIds] = useState(new Set());
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = useCallback(() => {
+    setLoading(true);
+    apiCall("GET", "/api/buckets").then(data => {
+      if (data?.ok) setBuckets(data.buckets || []);
+      setLoading(false);
+    });
+  }, []);
+  useEffect(load, [load]);
+
+  const open = (b = null) => {
+    setEdit(b);
+    setName(b?.name || "");
+    setDesc(b?.description || "");
+    setMemberIds(new Set(b?.client_ids || []));
+    setError("");
+    setShowForm(true);
+  };
+
+  const save = async () => {
+    if (!name.trim()) { setError("Name is required"); return; }
+    setSaving(true); setError("");
+    const body = { name: name.trim(), description: desc, client_ids: Array.from(memberIds) };
+    const data = edit
+      ? await apiCall("PUT", `/api/buckets/${edit.id}`, body)
+      : await apiCall("POST", "/api/buckets", body);
+    setSaving(false);
+    if (data?.ok) { setShowForm(false); load(); }
+    else setError(data?.error || "Save failed");
+  };
+
+  const remove = async (b) => {
+    if (!window.confirm(`Delete bucket "${b.name}"? Members are not deleted.`)) return;
+    await apiCall("DELETE", `/api/buckets/${b.id}`);
+    load();
+  };
+
+  const toggleMember = (id) => {
+    setMemberIds(s => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+
+  return (
+    <div>
+      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20 }}>
+        <div>
+          <h1 style={{ margin:0,fontSize:22,fontFamily:"'Syne',sans-serif",letterSpacing:"-.03em" }}>Client buckets</h1>
+          <p style={{ margin:"3px 0 0",fontSize:13,color:C.muted }}>Group clients to send multi-orders in one click</p>
+        </div>
+        <Btn onClick={()=>open(null)}>+ New bucket</Btn>
+      </div>
+
+      {loading && <div style={{ textAlign:"center",padding:"40px",color:C.muted }}>Loading…</div>}
+      {!loading && buckets.length === 0 && (
+        <div style={{ ...sCard,textAlign:"center",padding:"52px" }}>
+          <div style={{ fontSize:34,marginBottom:12,opacity:.25 }}>⊞</div>
+          <div style={{ fontSize:15,fontWeight:600,marginBottom:8 }}>No buckets yet</div>
+          <div style={{ fontSize:13,color:C.muted,marginBottom:20 }}>Create groups like "All MTF clients" or "High value" to streamline multi-order placement.</div>
+          <Btn onClick={()=>open(null)}>+ New bucket</Btn>
+        </div>
+      )}
+      {!loading && buckets.length > 0 && (
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:14 }}>
+          {buckets.map(b => (
+            <div key={b.id} style={sCard}>
+              <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10 }}>
+                <div>
+                  <div style={{ fontWeight:600,fontSize:15 }}>{b.name}</div>
+                  {b.description && <div style={{ fontSize:12,color:C.muted,marginTop:2 }}>{b.description}</div>}
+                </div>
+                <span style={sBadge(C.blue)}>{b.member_count}</span>
+              </div>
+              <div style={{ fontSize:11,color:C.muted,marginBottom:14 }}>
+                {b.member_count} client{b.member_count===1?"":"s"} · created {new Date(b.created_at).toLocaleDateString("en-IN",{day:"2-digit",month:"short"})}
+              </div>
+              <div style={{ display:"flex",gap:8 }}>
+                <Btn variant="ghost" onClick={()=>open(b)} style={{ flex:1,padding:"6px 0",fontSize:12 }}>Edit</Btn>
+                <Btn variant="danger" onClick={()=>remove(b)} style={{ flex:1,padding:"6px 0",fontSize:12 }}>Delete</Btn>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Modal open={showForm} onClose={()=>setShowForm(false)} width={620}>
+        <h2 style={{ margin:"0 0 16px",fontSize:18,fontFamily:"'Syne',sans-serif" }}>
+          {edit ? "Edit bucket" : "New bucket"}
+        </h2>
+        <div style={{ marginBottom:14 }}>
+          <label style={sLbl}>Name</label>
+          <input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. All MTF clients" style={sInp} />
+        </div>
+        <div style={{ marginBottom:14 }}>
+          <label style={sLbl}>Description (optional)</label>
+          <input value={desc} onChange={e=>setDesc(e.target.value)} placeholder="e.g. Margin trading clients only" style={sInp} />
+        </div>
+        <div style={{ marginBottom:14 }}>
+          <label style={sLbl}>Members ({memberIds.size} selected)</label>
+          <div style={{ maxHeight:240,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:8,padding:6 }}>
+            {clients.length === 0 && <div style={{ padding:"14px",textAlign:"center",color:C.muted,fontSize:12 }}>No clients available.</div>}
+            {clients.map(c => (
+              <label key={c.id} style={{ display:"flex",alignItems:"center",gap:10,padding:"7px 8px",borderRadius:6,cursor:"pointer",
+                background: memberIds.has(c.id) ? "rgba(66,133,255,.08)" : "transparent" }}>
+                <input type="checkbox" checked={memberIds.has(c.id)} onChange={()=>toggleMember(c.id)} />
+                <span style={{ fontSize:13,fontWeight:600 }}>{c.name}</span>
+                <span style={{ fontSize:11,color:C.muted,marginLeft:"auto" }}>{c.broker}{c.active?"":" · INACTIVE"}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        {error && <div style={{ background:"rgba(255,69,96,.08)",border:"1px solid rgba(255,69,96,.2)",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:C.red }}>{error}</div>}
+        <div style={{ display:"flex",gap:10,justifyContent:"flex-end" }}>
+          <Btn variant="ghost" onClick={()=>setShowForm(false)}>Cancel</Btn>
+          <Btn onClick={save} disabled={saving || !name.trim()}>{saving ? "Saving…" : (edit ? "Save changes" : "Create bucket")}</Btn>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SINGLE ORDER TAB
+// ═══════════════════════════════════════════════════════════════════════
+function SingleOrderTab({ clients }) {
+  const [selClient, setSelClient] = useState("");
+  const [payload, setPayload] = useState(null);
+  const [placing, setPlacing] = useState(false);
+  const [result, setResult] = useState(null);
+
+  useEffect(() => { if (!selClient && clients.length) setSelClient(clients[0].id); }, [clients, selClient]);
+
+  const place = async () => {
+    if (!selClient || !payload) return;
+    if (!window.confirm(`Place ${payload.side} ${payload.qty} ${payload.ticker} at ${payload.order_type === "MARKET" ? "MARKET" : "₹" + payload.price}?`)) return;
+    setPlacing(true); setResult(null);
+    const data = await apiCall("POST", "/api/trade/single", { client_id: selClient, payload });
+    setPlacing(false);
+    setResult(data);
+  };
+
+  const canPlace = selClient && payload && (payload.order_type === "MARKET" || payload.price > 0);
+
+  return (
+    <div>
+      <div style={{ marginBottom:20 }}>
+        <h1 style={{ margin:0,fontSize:22,fontFamily:"'Syne',sans-serif",letterSpacing:"-.03em" }}>Single order</h1>
+        <p style={{ margin:"3px 0 0",fontSize:13,color:C.muted }}>Place a one-off order for a single client</p>
+      </div>
+
+      <div style={{ ...sCard, marginBottom:16 }}>
+        <label style={sLbl}>Client</label>
+        <select value={selClient} onChange={e=>setSelClient(e.target.value)} style={sInp}>
+          {clients.length === 0 && <option value="">No clients available</option>}
+          {clients.map(c => <option key={c.id} value={c.id}>{c.name} · {c.broker} · {c.credentials?.client_id}</option>)}
+        </select>
+      </div>
+
+      <OrderForm value={null} onChange={setPayload} idx={0} />
+
+      <div style={{ marginTop:18,display:"flex",justifyContent:"flex-end",gap:10 }}>
+        <Btn onClick={place} disabled={!canPlace || placing}
+          variant={payload?.side === "SELL" ? "danger" : "primary"}
+          style={{ padding:"10px 26px",fontSize:14 }}>
+          {placing ? "Placing…" : payload ? `Place ${payload.side}` : "Place order"}
+        </Btn>
+      </div>
+
+      {result && (
+        <div style={{ ...sCard, marginTop:18,
+          borderColor: result.ok && result.result?.ok ? "rgba(0,201,122,.3)" : "rgba(255,69,96,.3)",
+          background: result.ok && result.result?.ok ? "rgba(0,201,122,.05)" : "rgba(255,69,96,.05)" }}>
+          {result.ok && result.result?.ok ? (
+            <>
+              <div style={{ fontSize:14,fontWeight:600,color:C.green,marginBottom:6 }}>✓ Order placed successfully</div>
+              <div style={{ fontSize:12,color:C.muted }}>
+                Broker order ID: <span style={{ fontFamily:"'DM Mono',monospace",color:C.text }}>{result.result.order_id}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize:14,fontWeight:600,color:C.red,marginBottom:6 }}>✗ Order failed</div>
+              <div style={{ fontSize:12,color:C.muted }}>{result?.result?.error || result?.error || "Unknown error"}</div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  MULTI ORDER TAB
+// ═══════════════════════════════════════════════════════════════════════
+function MultiOrderTab({ clients }) {
+  const [orders, setOrders]   = useState([null]); // array of payloads
+  const [target, setTarget]   = useState("clients"); // "clients" | "bucket"
+  const [selClients, setSelClients] = useState(new Set());
+  const [buckets, setBuckets] = useState([]);
+  const [bucketId, setBucketId] = useState("");
+  const [placing, setPlacing] = useState(false);
+  const [results, setResults] = useState(null);
+
+  useEffect(() => {
+    apiCall("GET", "/api/buckets").then(data => { if (data?.ok) setBuckets(data.buckets || []); });
+  }, []);
+
+  const setPayloadAt = (i, p) => setOrders(o => o.map((x, j) => j === i ? p : x));
+  const addOrder    = () => setOrders(o => [...o, null]);
+  const removeOrder = (i) => setOrders(o => o.length > 1 ? o.filter((_, j) => j !== i) : o);
+
+  const toggleClient = (id) => {
+    setSelClients(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  };
+  const selectAll = () => setSelClients(new Set(clients.filter(c => c.active).map(c => c.id)));
+  const clearAll  = () => setSelClients(new Set());
+
+  const validOrders = orders.filter(o => o && o.security_id && (o.order_type === "MARKET" || o.price > 0));
+  const targetCount = target === "bucket"
+    ? (buckets.find(b => b.id === bucketId)?.member_count || 0)
+    : selClients.size;
+  const canPlace = validOrders.length > 0 && targetCount > 0 && !placing;
+
+  const place = async () => {
+    if (!canPlace) return;
+    const summary = `${validOrders.length} order${validOrders.length===1?"":"s"} × ${targetCount} client${targetCount===1?"":"s"} = ${validOrders.length * targetCount} placements`;
+    if (!window.confirm(`Place ${summary}?\n\nOrders will be sent sequentially. This is irreversible.`)) return;
+    setPlacing(true); setResults(null);
+    const body = { orders: validOrders };
+    if (target === "bucket") body.bucket_id = bucketId;
+    else body.client_ids = Array.from(selClients);
+    const data = await apiCall("POST", "/api/trade/multi", body);
+    setPlacing(false);
+    setResults(data);
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom:20 }}>
+        <h1 style={{ margin:0,fontSize:22,fontFamily:"'Syne',sans-serif",letterSpacing:"-.03em" }}>Multi order</h1>
+        <p style={{ margin:"3px 0 0",fontSize:13,color:C.muted }}>Place one or more orders across multiple clients in one go</p>
+      </div>
+
+      {/* Orders */}
+      <div style={{ display:"flex",flexDirection:"column",gap:14,marginBottom:16 }}>
+        {orders.map((_, i) => (
+          <OrderForm key={i} idx={i} value={orders[i]}
+            onChange={p => setPayloadAt(i, p)}
+            onRemove={orders.length > 1 ? () => removeOrder(i) : null} />
+        ))}
+      </div>
+      <div style={{ marginBottom:24 }}>
+        <Btn variant="ghost" onClick={addOrder} style={{ padding:"6px 14px",fontSize:12 }}>+ Add order</Btn>
+      </div>
+
+      {/* Target client selector */}
+      <div style={{ ...sCard, marginBottom:16 }}>
+        <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14 }}>
+          <h3 style={{ margin:0,fontSize:14,fontFamily:"'Syne',sans-serif" }}>Target clients</h3>
+          <div style={{ display:"flex",gap:6 }}>
+            <button onClick={()=>setTarget("clients")}
+              style={{ padding:"5px 12px",borderRadius:6,fontWeight:600,fontSize:11,cursor:"pointer",fontFamily:"inherit",
+                background: target==="clients" ? "rgba(66,133,255,.18)" : "transparent",
+                color:      target==="clients" ? C.blue : C.muted,
+                border:`1px solid ${target==="clients" ? C.blue : C.hint}` }}>Pick clients</button>
+            <button onClick={()=>setTarget("bucket")}
+              style={{ padding:"5px 12px",borderRadius:6,fontWeight:600,fontSize:11,cursor:"pointer",fontFamily:"inherit",
+                background: target==="bucket" ? "rgba(66,133,255,.18)" : "transparent",
+                color:      target==="bucket" ? C.blue : C.muted,
+                border:`1px solid ${target==="bucket" ? C.blue : C.hint}` }}>Use bucket</button>
+          </div>
+        </div>
+
+        {target === "clients" ? (
+          <>
+            <div style={{ display:"flex",gap:8,marginBottom:10 }}>
+              <Btn variant="ghost" onClick={selectAll} style={{ padding:"4px 10px",fontSize:11 }}>Select all active</Btn>
+              <Btn variant="ghost" onClick={clearAll}  style={{ padding:"4px 10px",fontSize:11 }}>Clear</Btn>
+              <span style={{ marginLeft:"auto",fontSize:12,color:C.muted,alignSelf:"center" }}>{selClients.size} selected</span>
+            </div>
+            <div style={{ maxHeight:200,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:8,padding:6 }}>
+              {clients.length === 0 && <div style={{ padding:"14px",textAlign:"center",color:C.muted,fontSize:12 }}>No clients available.</div>}
+              {clients.map(c => (
+                <label key={c.id} style={{ display:"flex",alignItems:"center",gap:10,padding:"6px 8px",borderRadius:6,cursor: c.active ? "pointer" : "not-allowed",
+                  opacity: c.active ? 1 : .4,
+                  background: selClients.has(c.id) ? "rgba(66,133,255,.08)" : "transparent" }}>
+                  <input type="checkbox" disabled={!c.active}
+                    checked={selClients.has(c.id)} onChange={()=>toggleClient(c.id)} />
+                  <span style={{ fontSize:13,fontWeight:600 }}>{c.name}</span>
+                  <span style={{ fontSize:11,color:C.muted,marginLeft:"auto" }}>{c.broker}{c.active?"":" · INACTIVE"}</span>
+                </label>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div>
+            <select value={bucketId} onChange={e=>setBucketId(e.target.value)} style={sInp}>
+              <option value="">— Select a bucket —</option>
+              {buckets.map(b => <option key={b.id} value={b.id}>{b.name} ({b.member_count})</option>)}
+            </select>
+            {bucketId && (
+              <div style={{ marginTop:8,fontSize:12,color:C.muted }}>
+                Will send to {buckets.find(b => b.id === bucketId)?.member_count || 0} client{(buckets.find(b => b.id === bucketId)?.member_count || 0)===1?"":"s"} in this bucket.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Place button + summary */}
+      <div style={{ ...sCard, marginBottom:16, display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 }}>
+        <div>
+          <div style={{ fontSize:13,fontWeight:600,color:C.text }}>
+            {validOrders.length} valid order{validOrders.length===1?"":"s"} × {targetCount} target{targetCount===1?"":"s"}
+            {" "}= <span style={{color:C.blue}}>{validOrders.length * targetCount} placement{validOrders.length * targetCount===1?"":"s"}</span>
+          </div>
+          {orders.some(o => !o || !o.security_id) && (
+            <div style={{ fontSize:11,color:C.amber,marginTop:3 }}>⚠ Some orders are incomplete and will be skipped</div>
+          )}
+        </div>
+        <Btn onClick={place} disabled={!canPlace} style={{ padding:"10px 26px",fontSize:14 }}>
+          {placing ? "Placing…" : "Place all orders"}
+        </Btn>
+      </div>
+
+      {/* Results table */}
+      {results && (
+        <div style={sCard}>
+          <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14 }}>
+            <h3 style={{ margin:0,fontSize:14,fontFamily:"'Syne',sans-serif" }}>Results</h3>
+            {results.summary && (
+              <div style={{ display:"flex",gap:10,fontSize:12 }}>
+                <span style={{color:C.green}}>✓ {results.summary.ok} succeeded</span>
+                <span style={{color:C.red}}>✗ {results.summary.fail} failed</span>
+                <span style={{color:C.muted}}>of {results.summary.total} total</span>
+              </div>
+            )}
+          </div>
+          {results.error && <div style={{ background:"rgba(255,69,96,.08)",border:"1px solid rgba(255,69,96,.2)",borderRadius:8,padding:"12px 16px",marginBottom:14,fontSize:13,color:C.red }}>⚠ {results.error}</div>}
+          {results.results && (
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%",borderCollapse:"collapse",minWidth:640 }}>
+                <thead><tr style={{ borderBottom:`1px solid ${C.border}` }}>
+                  {["Order #","Client","Status","Order ID / Error"].map(h => (
+                    <th key={h} style={{ textAlign:"left",padding:"7px 10px",fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:".05em",fontWeight:500 }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {results.results.map((r, i) => (
+                    <tr key={i} style={{ borderBottom:`1px solid rgba(255,255,255,.03)` }}>
+                      <td style={{ padding:"8px 10px",fontFamily:"'DM Mono',monospace",color:C.muted,fontSize:12 }}>#{r.order_index + 1}</td>
+                      <td style={{ padding:"8px 10px",fontWeight:600 }}>{r.client_name}</td>
+                      <td style={{ padding:"8px 10px" }}>
+                        <span style={sBadge(r.ok ? C.green : C.red)}>{r.ok ? "✓ OK" : "✗ FAIL"}</span>
+                      </td>
+                      <td style={{ padding:"8px 10px",fontFamily:"'DM Mono',monospace",fontSize:11,color: r.ok ? C.text : C.red }}>
+                        {r.ok ? r.order_id : r.error}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 //  MAIN APP
 // ═══════════════════════════════════════════════════════════════════════
 const STATUS_COL = {RUNNING:C.green,PAUSED:C.amber,STOPPED:C.red,IDLE:"rgba(255,255,255,.4)"};
 const NAV = [
   {id:"dashboard",  label:"Dashboard",   icon:"◈"},
   {id:"clients",    label:"Clients",     icon:"⊙"},
+  {id:"buckets",    label:"Buckets",     icon:"⊞"},
+  {id:"single",     label:"Single Order",icon:"→"},
+  {id:"multi",      label:"Multi Order", icon:"⇉"},
   {id:"bots",       label:"Active bots", icon:"⊡"},
   {id:"holdings",   label:"Holdings",    icon:"▦"},
   {id:"positions",  label:"Positions",   icon:"◫"},
   {id:"limits",     label:"Limit window",icon:"◷"},
-  {id:"demo",       label:"Demo trade",  icon:"▷"},
   {id:"orders",     label:"Orders",      icon:"≡"},
+  {id:"demo",       label:"Demo trade",  icon:"▷"},
   {id:"logs",       label:"Logs",        icon:"☰"},
   {id:"account",    label:"Account",     icon:"⊚"},
 ];
@@ -2297,6 +2834,9 @@ export default function App() {
           {tab==="limits"    && <LimitTab clients={clients}/>}
           {tab==="demo"      && <DemoTab/>}
 
+          {tab==="buckets" && <BucketsTab clients={clients}/>}
+          {tab==="single"  && <SingleOrderTab clients={clients}/>}
+          {tab==="multi"   && <MultiOrderTab clients={clients}/>}
           {tab==="orders" && <OrdersTab clients={clients} filter={orderFilter} onFilterChange={setOrderFilter} />}
           {tab==="logs"    && <LogsTab/>}
           {tab==="account" && <AccountTab user={user} onUserUpdate={setUser}/>}

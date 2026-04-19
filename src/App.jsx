@@ -1646,7 +1646,7 @@ export default function App() {
     if (data?.ok) {
       setBots(prev => prev.map(b => b.id === id ? { ...b, status: "RUNNING" } : b));
     } else {
-      alert(`Failed to start bot: ${data?.error || "unknown error"}`);
+      alert(`Failed to start bot:\n\n${data?.message || data?.error || "Unknown error"}`);
     }
   };
 
@@ -1657,7 +1657,7 @@ export default function App() {
     if (data?.ok) {
       setBots(prev => prev.map(b => b.id === id ? { ...b, status: "STOPPED" } : b));
     } else {
-      alert(`Failed to stop bot: ${data?.error || "unknown error"}`);
+      alert(`Failed to stop bot:\n\n${data?.message || data?.error || "Unknown error"}`);
     }
   };
 
@@ -1667,7 +1667,7 @@ export default function App() {
       setBots(prev => prev.map(b => ({ ...b, status: "STOPPED" })));
       alert(`⚡ KILL SWITCH EXECUTED at IST ${istTime}\n${data.message || `${data.killed || 0} bot(s) stopped.`}`);
     } else {
-      alert(`Kill switch failed: ${data?.error || "unknown error"}`);
+      alert(`Kill switch failed:\n\n${data?.message || data?.error || "Unknown error"}`);
     }
   };
 
@@ -1676,7 +1676,7 @@ export default function App() {
     if (data?.ok) {
       setBots(prev => prev.map(b => b.id === id ? { ...b, status: "STOPPED" } : b));
     } else {
-      alert(`Kill failed: ${data?.error || "unknown error"}`);
+      alert(`Kill failed:\n\n${data?.message || data?.error || "Unknown error"}`);
     }
   };
 

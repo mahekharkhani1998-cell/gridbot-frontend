@@ -2279,16 +2279,22 @@ const NAV = [
   {id:"positions",  label:"Positions",   icon:"◫"},
   {id:"limits",     label:"Limit window",icon:"◷"},
   {id:"orders",     label:"Orders",      icon:"≡"},
-  {id:"demo",       label:"Demo trade",  icon:"▷"},
   {id:"logs",       label:"Logs",        icon:"☰"},
   {id:"account",    label:"Account",     icon:"⊚"},
 ];
+
+// Read initial tab from URL hash (e.g. #limits) so refresh stays on same tab.
+function getInitialTab() {
+  const valid = new Set(NAV.map(n => n.id));
+  const hash = (window.location.hash || "").replace("#", "");
+  return valid.has(hash) ? hash : "dashboard";
+}
 // No hardcoded clients — all clients load from backend database
 
 export default function App() {
   const [user, setUser]         = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
-  const [tab, setTab]         = useState("dashboard");
+  const [tab, setTab]         = useState(getInitialTab);
   const [clients, setClients] = useState([]);
   const [clientsLoading, setClientsLoading] = useState(false);
   const [clientsPage, setClientsPage]       = useState(1);
@@ -2358,6 +2364,27 @@ export default function App() {
   },[]);
 
   useEffect(()=>{ const t=setInterval(()=>setTick(x=>x+1),5000); return()=>clearInterval(t); },[]);
+
+  // Persist active tab in the URL hash so refresh keeps the user on the same
+  // tab and they can bookmark/share specific tabs.
+  useEffect(() => {
+    if (!user) return;
+    const target = `#${tab}`;
+    if (window.location.hash !== target) {
+      window.history.replaceState(null, "", target);
+    }
+  }, [tab, user]);
+
+  // Listen for browser back/forward — sync tab state from hash
+  useEffect(() => {
+    const onHashChange = () => {
+      const valid = new Set(NAV.map(n => n.id));
+      const h = (window.location.hash || "").replace("#", "");
+      if (valid.has(h) && h !== tab) setTab(h);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [tab]);
 
   // Bots are loaded from backend; no client-side P&L simulation.
   // We refresh the bot list every 5s so status/PnL stay reasonably fresh.
@@ -2832,7 +2859,6 @@ export default function App() {
           {tab==="holdings"  && <HoldingsTab clients={clients}/>}
           {tab==="positions" && <PositionsTab clients={clients}/>}
           {tab==="limits"    && <LimitTab clients={clients}/>}
-          {tab==="demo"      && <DemoTab/>}
 
           {tab==="buckets" && <BucketsTab clients={clients}/>}
           {tab==="single"  && <SingleOrderTab clients={clients}/>}

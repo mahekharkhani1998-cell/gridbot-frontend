@@ -429,14 +429,43 @@ function Modal({ open, onClose, children, width=680 }) {
 function ScriptSearch({ exchange, value, onChange }) {
   const [q, setQ] = useState(value?.name || "");
   const [open, setOpen] = useState(false);
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [usedFallback, setUsedFallback] = useState(false);
   const ref = useRef();
-  const scripts = SEGMENT_SCRIPTS[exchange] || [];
-  const filtered = q.length === 0
-    ? scripts.slice(0,20)
-    : scripts.filter(s =>
-        s.name.toLowerCase().includes(q.toLowerCase()) ||
-        s.id.startsWith(q)
-      ).slice(0,25);
+  const reqId = useRef(0);
+
+  // Debounced fetch from backend (150k Dhan instruments). Falls back to the
+  // bundled SEED data only if the API is unreachable.
+  useEffect(() => {
+    if (!open) return;
+    const myReq = ++reqId.current;
+    setLoading(true);
+    const t = setTimeout(async () => {
+      const data = await apiCall("GET", `/api/market/scripts?exchange=${encodeURIComponent(exchange)}&q=${encodeURIComponent(q)}&limit=25`);
+      if (reqId.current !== myReq) return; // stale response
+      if (data?.ok && Array.isArray(data.scripts)) {
+        setResults(data.scripts.map(s => ({
+          id:   s.security_id,
+          name: s.trading_symbol || s.name,
+          isin: s.isin,
+          lot:  s.lot_size,
+          s:    s.instrument || "",
+        })));
+        setUsedFallback(false);
+      } else {
+        // Fallback to bundled seed data
+        const seed = SEGMENT_SCRIPTS[exchange] || [];
+        const filtered = q
+          ? seed.filter(x => x.name.toLowerCase().includes(q.toLowerCase()) || String(x.id).startsWith(q)).slice(0,25)
+          : seed.slice(0, 20);
+        setResults(filtered);
+        setUsedFallback(true);
+      }
+      setLoading(false);
+    }, 180);
+    return () => clearTimeout(t);
+  }, [q, exchange, open]);
 
   useEffect(()=>{
     const h=(e)=>{ if(ref.current&&!ref.current.contains(e.target)) setOpen(false); };
@@ -457,17 +486,20 @@ function ScriptSearch({ exchange, value, onChange }) {
           position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",
           cursor:"pointer",color:C.muted,fontSize:18,lineHeight:1 }}>×</span>}
       </div>
-      {open && filtered.length>0 && (
+      {open && (
         <div style={{ position:"absolute",top:"calc(100% + 4px)",left:0,right:0,zIndex:500,
           background:"#1a1f30",border:`1px solid ${C.border}`,borderRadius:10,
           boxShadow:"0 16px 48px rgba(0,0,0,.65)",maxHeight:280,overflowY:"auto" }}>
           <div style={{ padding:"6px 12px",fontSize:10,color:C.muted,borderBottom:`1px solid ${C.border}`,
             display:"flex",justifyContent:"space-between" }}>
-            <span>{scripts.length} scripts in {exchange}</span>
-            <span>{LAST_REFRESH}</span>
+            <span>{exchange} · {loading ? "searching…" : `${results.length} match${results.length===1?"":"es"}`}</span>
+            <span>{usedFallback ? "⚠ offline (seed data)" : "Dhan master · live"}</span>
           </div>
-          {filtered.map((s,i)=>(
-            <div key={s.id+i} onClick={()=>select(s)}
+          {!loading && results.length === 0 && (
+            <div style={{ padding:"14px",fontSize:12,color:C.muted,textAlign:"center" }}>No scripts found.</div>
+          )}
+          {results.map((s,i)=>(
+            <div key={s.id+":"+i} onClick={()=>select(s)}
               style={{ padding:"9px 14px",cursor:"pointer",borderBottom:`1px solid rgba(255,255,255,.03)`,
                 display:"flex",justifyContent:"space-between",alignItems:"center" }}
               onMouseEnter={e=>e.currentTarget.style.background="rgba(66,133,255,.1)"}
@@ -475,12 +507,12 @@ function ScriptSearch({ exchange, value, onChange }) {
               <div>
                 <div style={{ fontWeight:600,fontSize:13,color:C.text }}>{s.name}</div>
                 <div style={{ fontSize:11,color:C.muted,marginTop:1 }}>
-                  {s.isin||"—"}{s.lot?` · Lot: ${s.lot}`:""}
+                  {s.isin||"—"}{s.lot && s.lot > 1 ?` · Lot: ${s.lot}`:""}
                 </div>
               </div>
               <div style={{ textAlign:"right",flexShrink:0,marginLeft:12 }}>
                 <div style={sBadge(C.blue)}>{s.id}</div>
-                <div style={{ fontSize:10,color:C.muted,marginTop:3 }}>{s.s}</div>
+                {s.s && <div style={{ fontSize:10,color:C.muted,marginTop:3 }}>{s.s}</div>}
               </div>
             </div>
           ))}
@@ -850,17 +882,19 @@ function HoldingsTab({ clients }) {
     setLoading(true); setError("");
     apiCall("GET", `/api/clients/${selClient}/holdings`).then(data=>{
       if (data?.ok) {
+        // Backend returns normalized shape — no field-name guessing needed.
         const mapped = (data.holdings||[]).map(h=>({
-          script:   h.tradingSymbol||h.customSymbol||String(h.securityId||""),
-          sid:      String(h.securityId||""),
-          isin:     h.isin||"—",
-          buyQty:   parseInt(h.totalQty||h.buyQty||0),
-          sellQty:  parseInt(h.sellQty||0),
-          buyRate:  parseFloat(h.avgCostPrice||h.averagePrice||0),
-          sellRate: parseFloat(h.sellAvgPrice||0),
-          netQty:   parseInt(h.availableQty||h.netQty||h.totalQty||0),
-          pnl:      parseFloat(h.unrealizedProfit||h.totalProfitLoss||h.pnl||0),
-          ltp:      parseFloat(h.lastTradedPrice||h.ltp||0),
+          script:   h.tradingSymbol,
+          sid:      h.securityId,
+          isin:     h.isin || "—",
+          buyQty:   h.totalQty,
+          sellQty:  0, // holdings have no sell qty; that's a positions concept
+          buyRate:  h.avgCostPrice,
+          sellRate: 0,
+          netQty:   h.availableQty || h.totalQty,
+          pnl:      h.pnl,
+          pnlPct:   h.pnlPct,
+          ltp:      h.lastTradedPrice,
         }));
         setHoldings(mapped);
       } else {
@@ -950,16 +984,16 @@ function PositionsTab({ clients }) {
     apiCall("GET", `/api/clients/${selClient}/positions`).then(data=>{
       if (data?.ok) {
         const mapped = (data.positions||[]).map(p=>({
-          script:   p.tradingSymbol||p.customSymbol||String(p.securityId||""),
-          sid:      String(p.securityId||""),
-          type:     p.exchangeSegment?.includes("FNO")?"FUT":p.exchangeSegment?.includes("OPT")?"OPT":"EQ",
-          buyQty:   parseInt(p.buyQty||0),
-          sellQty:  parseInt(p.sellQty||0),
-          buyRate:  parseFloat(p.buyAvg||p.buyPrice||0),
-          sellRate: parseFloat(p.sellAvg||p.sellPrice||0),
-          netQty:   parseInt(p.netQty||0),
-          pnl:      parseFloat(p.unrealizedProfit||p.realizedProfit||p.pnl||0),
-          ltp:      parseFloat(p.lastTradedPrice||p.ltp||0),
+          script:   p.tradingSymbol,
+          sid:      p.securityId,
+          type:     p.type,             // backend already classifies EQ/FUT/OPT
+          buyQty:   p.buyQty,
+          sellQty:  p.sellQty,
+          buyRate:  p.buyAvg,
+          sellRate: p.sellAvg,
+          netQty:   p.netQty,
+          pnl:      p.pnl,              // realized + unrealized
+          ltp:      p.lastTradedPrice,
         }));
         setPositions(mapped);
       } else {
@@ -1043,17 +1077,25 @@ function LimitTab({ clients }) {
     if (!active.length) return;
     setLoading(true); setError("");
     Promise.all(active.map(c=>
-      apiCall("GET", `/api/clients/${c.id}/limits`).then(data=>({ client:c, data:data?.limits||data?.data||{}, ok:data?.ok }))
+      apiCall("GET", `/api/clients/${c.id}/limits`).then(data=>({ client:c, limits:data?.limits||{}, ok:data?.ok }))
     )).then(results=>{
-      const mapped = results.map(r=>({
-        code:            r.client.credentials?.client_id||"—",
-        name:            r.client.name,
-        broker:          r.client.broker,
-        available:       parseFloat(r.data.availabelBalance||r.data.availableBalance||r.data.net||0),
-        opening_balance: parseFloat(r.data.sodLimit||r.data.openingBalance||r.data.payin||0),
-        used_margin:     parseFloat(r.data.utilizedAmount||r.data.usedMargin||0),
-        gross_margin:    parseFloat(r.data.blockedPayoutAmount||r.data.grossMargin||r.data.sodLimit||0),
-      })).map(l=>({ ...l, pct_available: l.opening_balance>0?Math.min(100,Math.round((l.available/l.opening_balance)*100)):0 }));
+      const mapped = results.map(r=>{
+        const l = r.limits;
+        // Backend already maps Dhan's typo ("availabelBalance") → availableBalance
+        const available  = l.availableBalance    || 0;
+        const sod        = l.sodLimit            || 0;
+        const used       = l.utilizedAmount      || 0;
+        const collateral = l.collateralAmount    || 0;
+        const withdraw   = l.withdrawableBalance || 0;
+        return {
+          code:            r.client.credentials?.client_id || "—",
+          name:            r.client.name,
+          broker:          r.client.broker,
+          available, sod, used, collateral, withdraw,
+          // Sensible % bar: how much of opening limit is still free
+          pct_available:   sod > 0 ? Math.max(0, Math.min(100, (available / sod) * 100)) : 0,
+        };
+      });
       setLimits(mapped);
       setLoading(false);
     }).catch(()=>{ setError("Could not fetch limits"); setLoading(false); });
@@ -1070,9 +1112,9 @@ function LimitTab({ clients }) {
       {!loading && (
         <div style={sCard}>
           <div style={{ overflowX:"auto" }}>
-            <table style={{ width:"100%",borderCollapse:"collapse",minWidth:700 }}>
+            <table style={{ width:"100%",borderCollapse:"collapse",minWidth:780 }}>
               <thead><tr style={{ borderBottom:`1px solid ${C.border}` }}>
-                {["Client Code","Name","Broker","Available Margin","Opening Balance","Used Margin","Gross Margin","% Available"].map(h=>(
+                {["Client Code","Name","Broker","Available","SoD Limit","Utilized","Collateral","Withdrawable","% Free"].map(h=>(
                   <th key={h} style={{ textAlign:"left",padding:"7px 10px",fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:".05em",fontWeight:500,whiteSpace:"nowrap" }}>{h}</th>
                 ))}
               </tr></thead>
@@ -1086,13 +1128,14 @@ function LimitTab({ clients }) {
                       <td style={{ padding:"11px 10px",fontFamily:"'DM Mono',monospace",color:C.muted,fontSize:12 }}>{l.code}</td>
                       <td style={{ padding:"11px 10px",fontWeight:600 }}>{l.name}</td>
                       <td style={{ padding:"11px 10px" }}><span style={sBadge(C.blue)}>{l.broker}</span></td>
-                      <td style={{ padding:"11px 10px",fontFamily:"'DM Mono',monospace",color:C.green,fontWeight:600 }}>₹{l.available.toLocaleString("en-IN")}</td>
-                      <td style={{ padding:"11px 10px",fontFamily:"'DM Mono',monospace" }}>₹{l.opening_balance.toLocaleString("en-IN")}</td>
-                      <td style={{ padding:"11px 10px",fontFamily:"'DM Mono',monospace",color:C.red }}>₹{l.used_margin.toLocaleString("en-IN")}</td>
-                      <td style={{ padding:"11px 10px",fontFamily:"'DM Mono',monospace" }}>₹{l.gross_margin.toLocaleString("en-IN")}</td>
+                      <td style={{ padding:"11px 10px",fontFamily:"'DM Mono',monospace",color:C.green,fontWeight:600 }}>₹{l.available.toLocaleString("en-IN",{maximumFractionDigits:2})}</td>
+                      <td style={{ padding:"11px 10px",fontFamily:"'DM Mono',monospace" }}>₹{l.sod.toLocaleString("en-IN",{maximumFractionDigits:2})}</td>
+                      <td style={{ padding:"11px 10px",fontFamily:"'DM Mono',monospace",color:C.red }}>₹{l.used.toLocaleString("en-IN",{maximumFractionDigits:2})}</td>
+                      <td style={{ padding:"11px 10px",fontFamily:"'DM Mono',monospace" }}>₹{l.collateral.toLocaleString("en-IN",{maximumFractionDigits:2})}</td>
+                      <td style={{ padding:"11px 10px",fontFamily:"'DM Mono',monospace" }}>₹{l.withdraw.toLocaleString("en-IN",{maximumFractionDigits:2})}</td>
                       <td style={{ padding:"11px 10px" }}>
                         <div style={{ display:"flex",alignItems:"center",gap:8 }}>
-                          <div style={{ flex:1,height:6,background:"rgba(255,255,255,.08)",borderRadius:3,overflow:"hidden" }}>
+                          <div style={{ flex:1,height:6,background:"rgba(255,255,255,.08)",borderRadius:3,overflow:"hidden",minWidth:60 }}>
                             <div style={{ height:"100%",width:`${l.pct_available}%`,background:pctCol,borderRadius:3 }}/>
                           </div>
                           <span style={{ fontFamily:"'DM Mono',monospace",fontSize:12,color:pctCol,minWidth:38 }}>{l.pct_available.toFixed(1)}%</span>
@@ -1101,13 +1144,13 @@ function LimitTab({ clients }) {
                     </tr>
                   );
                 })}
-                {limits.length===0 && <tr><td colSpan={8} style={{ padding:"32px",textAlign:"center",color:C.muted }}>No active clients found.</td></tr>}
+                {limits.length===0 && <tr><td colSpan={9} style={{ padding:"32px",textAlign:"center",color:C.muted }}>No active clients found.</td></tr>}
               </tbody>
             </table>
           </div>
         </div>
       )}
-      <div style={{ marginTop:10,fontSize:11,color:C.muted }}>* Live data from Dhan fund-limit API · All timestamps IST</div>
+      <div style={{ marginTop:10,fontSize:11,color:C.muted }}>* Live data from Dhan /v2/fundlimit · All timestamps IST</div>
     </div>
   );
 }
@@ -1313,6 +1356,132 @@ function DemoTab() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+//  ORDERS TAB
+// ═══════════════════════════════════════════════════════════════════════
+function OrdersTab({ clients, filter, onFilterChange }) {
+  const [selClient, setSelClient] = useState(clients[0]?.id || "");
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
+
+  const load = useCallback(() => {
+    if (!selClient) { setOrders([]); return; }
+    setLoading(true); setError(""); setWarning("");
+    apiCall("GET", `/api/orders?client_id=${selClient}&source=both&limit=500`).then(data=>{
+      if (data?.ok) {
+        setOrders(data.orders || []);
+        if (data.warning) setWarning(data.warning);
+      } else {
+        setError(data?.error || "Could not fetch orders.");
+      }
+      setLoading(false);
+    }).catch(()=>{ setError("Network error"); setLoading(false); });
+  }, [selClient]);
+
+  useEffect(()=>{ load(); }, [load]);
+  useEffect(()=>{
+    if (!selClient) return;
+    const t = setInterval(load, 10000); // refresh every 10s
+    return () => clearInterval(t);
+  }, [selClient, load]);
+
+  const filtered = filter === "ALL"
+    ? orders
+    : orders.filter(o => o.bucket === filter);
+
+  const statusColor = (b) => b === "FILLED" ? C.green : b === "OPEN" ? C.amber : b === "CANCELLED" ? C.red : C.muted;
+
+  return (
+    <div>
+      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14,flexWrap:"wrap",gap:12 }}>
+        <div>
+          <h1 style={{ margin:0,fontSize:22,fontFamily:"'Syne',sans-serif",letterSpacing:"-.03em" }}>Order history</h1>
+          <p style={{ margin:"3px 0 0",fontSize:13,color:C.muted }}>Live broker orderbook + bot orders · IST · auto-refresh 10s</p>
+        </div>
+        <select value={selClient} onChange={e=>setSelClient(e.target.value)}
+          style={{ ...sInp,width:"auto",padding:"8px 14px" }}>
+          {clients.length === 0 && <option value="">No clients</option>}
+          {clients.map(c=><option key={c.id} value={c.id}>{c.name} · {c.broker}</option>)}
+        </select>
+      </div>
+
+      <div style={{ display:"flex",gap:8,marginBottom:16,flexWrap:"wrap" }}>
+        {["ALL","FILLED","OPEN","CANCELLED"].map(f=>{
+          const n = f === "ALL" ? orders.length : orders.filter(o => o.bucket === f).length;
+          return (
+            <button key={f} onClick={()=>onFilterChange(f)} style={{
+              padding:"6px 14px",borderRadius:7,border:`1px solid`,
+              borderColor:filter===f?C.blue:C.hint,
+              background:filter===f?"rgba(66,133,255,.12)":"transparent",
+              color:filter===f?C.blue:C.muted,
+              cursor:"pointer",fontSize:12,fontWeight:500,fontFamily:"inherit" }}>
+              {f} {orders.length > 0 && <span style={{ opacity:.6,marginLeft:4 }}>({n})</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      {error   && <div style={{ background:"rgba(255,69,96,.08)",border:"1px solid rgba(255,69,96,.2)",borderRadius:8,padding:"12px 16px",marginBottom:16,fontSize:13,color:C.red }}>⚠ {error}</div>}
+      {warning && <div style={{ background:"rgba(245,166,35,.08)",border:"1px solid rgba(245,166,35,.25)",borderRadius:8,padding:"12px 16px",marginBottom:16,fontSize:13,color:C.amber }}>⚠ {warning}</div>}
+
+      {loading && orders.length === 0 ? (
+        <div style={{ textAlign:"center",padding:"40px",color:C.muted }}>Fetching orders…</div>
+      ) : (
+        <div style={sCard}>
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ width:"100%",borderCollapse:"collapse",minWidth:900 }}>
+              <thead><tr style={{ borderBottom:`1px solid ${C.border}` }}>
+                {["Time (IST)","Symbol","Side","Type","Product","Qty","Price","Fill Px","Status","Source","Order ID"].map(h=>(
+                  <th key={h} style={{ textAlign:"left",padding:"7px 10px",fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:".05em",fontWeight:500,whiteSpace:"nowrap" }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {filtered.map((o,i)=>(
+                  <tr key={(o.order_id||i)+"-"+i} style={{ borderBottom:`1px solid rgba(255,255,255,.03)` }}
+                    onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,.02)"}
+                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <td style={{ padding:"9px 10px",fontFamily:"'DM Mono',monospace",fontSize:11,color:C.muted,whiteSpace:"nowrap" }}>
+                      {o.placed_at_ist || "—"}
+                    </td>
+                    <td style={{ padding:"9px 10px",fontWeight:600 }}>
+                      {o.ticker || o.security_id}
+                      <div style={{ fontSize:10,color:C.muted,fontFamily:"'DM Mono',monospace" }}>{o.security_id}</div>
+                    </td>
+                    <td style={{ padding:"9px 10px" }}>
+                      <span style={sBadge(o.side==="BUY"?C.green:C.red)}>{o.side}</span>
+                    </td>
+                    <td style={{ padding:"9px 10px",fontSize:12,color:C.muted }}>{o.order_type}</td>
+                    <td style={{ padding:"9px 10px" }}><span style={sBadge(C.amber)}>{o.product}</span></td>
+                    <td style={{ padding:"9px 10px",fontFamily:"'DM Mono',monospace" }}>{o.qty}</td>
+                    <td style={{ padding:"9px 10px",fontFamily:"'DM Mono',monospace" }}>{o.price > 0 ? `₹${o.price.toLocaleString("en-IN",{maximumFractionDigits:2})}` : "—"}</td>
+                    <td style={{ padding:"9px 10px",fontFamily:"'DM Mono',monospace",color:o.fill_price>0?C.green:C.muted }}>
+                      {o.fill_price > 0 ? `₹${o.fill_price.toLocaleString("en-IN",{maximumFractionDigits:2})}` : "—"}
+                    </td>
+                    <td style={{ padding:"9px 10px" }} title={o.error||""}>
+                      <span style={sBadge(statusColor(o.bucket))}>{o.status}</span>
+                    </td>
+                    <td style={{ padding:"9px 10px",fontSize:10,color:C.muted }}>
+                      <span style={sBadge(o.source==="live"?C.blue:C.purple)}>{o.source}</span>
+                    </td>
+                    <td style={{ padding:"9px 10px",fontFamily:"'DM Mono',monospace",fontSize:10,color:C.muted }}>{o.order_id || "—"}</td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr><td colSpan={11} style={{ padding:"32px",textAlign:"center",color:C.muted }}>
+                    {orders.length === 0 ? "No orders for this client yet." : `No orders match the ${filter} filter.`}
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 //  MAIN APP
 // ═══════════════════════════════════════════════════════════════════════
 const STATUS_COL = {RUNNING:C.green,PAUSED:C.amber,STOPPED:C.red,IDLE:"rgba(255,255,255,.4)"};
@@ -1334,7 +1503,12 @@ export default function App() {
   const [tab, setTab]         = useState("dashboard");
   const [clients, setClients] = useState([]);
   const [clientsLoading, setClientsLoading] = useState(false);
+  const [clientsPage, setClientsPage]       = useState(1);
+  const [clientsLimit]                      = useState(50);
+  const [clientsTotal, setClientsTotal]     = useState(0);
+  const [clientsQuery, setClientsQuery]     = useState("");
   const [bots, setBots]       = useState([]);
+  const [botsBusy, setBotsBusy] = useState({}); // botId -> "starting"|"stopping"
   const [showAddClient, setShowAddClient] = useState(false);
   const [showAddBot, setShowAddBot]       = useState(false);
   const [showKill, setShowKill]           = useState(false);
@@ -1357,15 +1531,33 @@ export default function App() {
     }
   }, []);
 
-  // Load clients from backend when logged in
+  // Load clients from backend when logged in (paginated + search, debounced on q)
   useEffect(()=>{
     if (!user) return;
     setClientsLoading(true);
-    apiCall("GET", "/api/clients").then(data=>{
-      if (data?.ok && Array.isArray(data.clients)) {
-        setClients(data.clients);
+    const t = setTimeout(() => {
+      apiCall("GET", `/api/clients?page=${clientsPage}&limit=${clientsLimit}&q=${encodeURIComponent(clientsQuery)}`).then(data=>{
+        if (data?.ok && Array.isArray(data.clients)) {
+          setClients(data.clients);
+          setClientsTotal(data.total || data.clients.length);
+        }
+        setClientsLoading(false);
+      });
+    }, clientsQuery ? 220 : 0);
+    return () => clearTimeout(t);
+  }, [user, clientsPage, clientsLimit, clientsQuery]);
+
+  // Load bots from backend when logged in
+  useEffect(()=>{
+    if (!user) return;
+    apiCall("GET", "/api/bots").then(data=>{
+      if (data?.ok && Array.isArray(data.bots)) {
+        setBots(data.bots.map(b=>({
+          ...b,
+          pnl:    parseFloat(b.realized_pnl || 0),
+          client: b.client_name || "",
+        })));
       }
-      setClientsLoading(false);
     });
   }, [user]);
 
@@ -1377,14 +1569,28 @@ export default function App() {
     return()=>clearInterval(t);
   },[]);
 
-  useEffect(()=>{ const t=setInterval(()=>setTick(x=>x+1),2000); return()=>clearInterval(t); },[]);
+  useEffect(()=>{ const t=setInterval(()=>setTick(x=>x+1),5000); return()=>clearInterval(t); },[]);
 
-  const liveBots = bots.map(b=>
-    b.status==="RUNNING"
-      ? {...b,pnl:+(b.pnl+(Math.random()-.48)*(b.grid_step*b.trade_qty*0.4)).toFixed(2)}
-      : b
-  );
-  const totalPnl    = liveBots.reduce((s,b)=>s+b.pnl,0);
+  // Bots are loaded from backend; no client-side P&L simulation.
+  // We refresh the bot list every 5s so status/PnL stay reasonably fresh.
+  useEffect(()=>{
+    if (!user) return;
+    const t = setInterval(() => {
+      apiCall("GET", "/api/bots").then(data=>{
+        if (data?.ok && Array.isArray(data.bots)) {
+          setBots(data.bots.map(b=>({
+            ...b,
+            pnl:    parseFloat(b.realized_pnl || 0),
+            client: b.client_name || "",
+          })));
+        }
+      });
+    }, 5000);
+    return () => clearInterval(t);
+  }, [user]);
+
+  const liveBots    = bots;
+  const totalPnl    = liveBots.reduce((s,b)=>s+(b.pnl||0),0);
   const runningBots = liveBots.filter(b=>b.status==="RUNNING").length;
 
   // Save client to backend database
@@ -1422,12 +1628,57 @@ export default function App() {
     setClients(prev=>prev.map(c=>c.id===id?{...c,active:!c.active}:c));
   };
 
-  const addBot      = (b) => setBots(prev=>[...prev,b]);
-  const killAllBots = () => {
-    setBots(prev=>prev.map(b=>({...b,status:"STOPPED",pnl:b.pnl})));
-    alert(`⚡ KILL SWITCH EXECUTED at IST ${istTime}\nAll bots stopped. Square-off orders sent.`);
+  // Add bot via backend (creates the row, returns the canonical record)
+  const addBot = async (b) => {
+    const data = await apiCall("POST", "/api/bots", b);
+    if (data?.ok && data.bot) {
+      setBots(prev => [...prev, { ...data.bot, pnl: 0, client: b.client || "" }]);
+    } else {
+      // Fallback: keep optimistic record so the user sees something
+      setBots(prev => [...prev, b]);
+    }
   };
-  const killBot = (id) => setBots(prev=>prev.map(b=>b.id===id?{...b,status:"STOPPED"}:b));
+
+  const startBot = async (id) => {
+    setBotsBusy(b => ({ ...b, [id]: "starting" }));
+    const data = await apiCall("POST", `/api/bots/${id}/start`);
+    setBotsBusy(b => { const n = { ...b }; delete n[id]; return n; });
+    if (data?.ok) {
+      setBots(prev => prev.map(b => b.id === id ? { ...b, status: "RUNNING" } : b));
+    } else {
+      alert(`Failed to start bot: ${data?.error || "unknown error"}`);
+    }
+  };
+
+  const stopBot = async (id) => {
+    setBotsBusy(b => ({ ...b, [id]: "stopping" }));
+    const data = await apiCall("POST", `/api/bots/${id}/stop`);
+    setBotsBusy(b => { const n = { ...b }; delete n[id]; return n; });
+    if (data?.ok) {
+      setBots(prev => prev.map(b => b.id === id ? { ...b, status: "STOPPED" } : b));
+    } else {
+      alert(`Failed to stop bot: ${data?.error || "unknown error"}`);
+    }
+  };
+
+  const killAllBots = async () => {
+    const data = await apiCall("POST", "/api/bots/kill-all", {});
+    if (data?.ok) {
+      setBots(prev => prev.map(b => ({ ...b, status: "STOPPED" })));
+      alert(`⚡ KILL SWITCH EXECUTED at IST ${istTime}\n${data.message || `${data.killed || 0} bot(s) stopped.`}`);
+    } else {
+      alert(`Kill switch failed: ${data?.error || "unknown error"}`);
+    }
+  };
+
+  const killBot = async (id) => {
+    const data = await apiCall("POST", `/api/bots/${id}/kill`);
+    if (data?.ok) {
+      setBots(prev => prev.map(b => b.id === id ? { ...b, status: "STOPPED" } : b));
+    } else {
+      alert(`Kill failed: ${data?.error || "unknown error"}`);
+    }
+  };
 
   const navStyle = (active) => ({
     padding:"9px 18px", cursor:"pointer", display:"flex", alignItems:"center", gap:9,
@@ -1558,7 +1809,7 @@ export default function App() {
                     <div style={{ display:"flex",justifyContent:"space-between",marginBottom:14 }}>
                       <span style={{ fontWeight:600 }}>All bots</span>
                       <div style={{ display:"flex",gap:10,alignItems:"center" }}>
-                        <span style={{ fontSize:11,color:C.muted }}>IST {istTime} · auto-refresh 2s</span>
+                        <span style={{ fontSize:11,color:C.muted }}>IST {istTime} · auto-refresh 5s</span>
                         <Btn variant="kill" style={{ padding:"5px 12px",fontSize:12 }} onClick={()=>setShowKill(true)}>⚡ Kill All</Btn>
                       </div>
                     </div>
@@ -1618,6 +1869,19 @@ export default function App() {
                 <strong style={{ color:C.blue }}>Auto token refresh at 8:00 AM IST</strong> — Provide TOTP secret for any broker.
                 Backend generates 6-digit OTP automatically every morning, logs in and refreshes access token.
                 No manual action from account holder. Works for Dhan, Zerodha, Angel One, Upstox, Fyers and all TOTP brokers.
+              </div>
+
+              {/* Search bar */}
+              <div style={{ display:"flex",gap:12,alignItems:"center",marginBottom:14 }}>
+                <input
+                  value={clientsQuery}
+                  onChange={e=>{ setClientsQuery(e.target.value); setClientsPage(1); }}
+                  placeholder="Search by name or broker…"
+                  style={{ ...sInp, maxWidth:340 }}
+                />
+                <span style={{ fontSize:12, color:C.muted }}>
+                  {clientsLoading ? "Loading…" : `${clientsTotal} client${clientsTotal===1?"":"s"} total`}
+                </span>
               </div>
               <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:14 }}>
                 {clientsLoading && (
@@ -1680,10 +1944,28 @@ export default function App() {
                   );
                 })}
               </div>
+
+              {/* Pagination */}
+              {clientsTotal > clientsLimit && (() => {
+                const pages = Math.ceil(clientsTotal / clientsLimit);
+                const goto = (p) => setClientsPage(Math.max(1, Math.min(pages, p)));
+                return (
+                  <div style={{ display:"flex",justifyContent:"center",alignItems:"center",gap:10,marginTop:18,fontSize:12 }}>
+                    <Btn variant="ghost" disabled={clientsPage<=1} onClick={()=>goto(clientsPage-1)}
+                      style={{ padding:"5px 12px",fontSize:12,opacity:clientsPage<=1?.4:1 }}>← Prev</Btn>
+                    <span style={{ color:C.muted }}>
+                      Page <span style={{ color:C.text,fontWeight:600 }}>{clientsPage}</span> of {pages}
+                      <span style={{ marginLeft:8,opacity:.6 }}>
+                        ({((clientsPage-1)*clientsLimit)+1}–{Math.min(clientsPage*clientsLimit, clientsTotal)} of {clientsTotal})
+                      </span>
+                    </span>
+                    <Btn variant="ghost" disabled={clientsPage>=pages} onClick={()=>goto(clientsPage+1)}
+                      style={{ padding:"5px 12px",fontSize:12,opacity:clientsPage>=pages?.4:1 }}>Next →</Btn>
+                  </div>
+                );
+              })()}
             </div>
           )}
-
-          {/* ACTIVE BOTS */}
           {tab==="bots" && (
             <div>
               <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20 }}>
@@ -1732,10 +2014,25 @@ export default function App() {
                             <span style={sBadge(C.amber)}>{b.product}</span>
                             <span style={{ fontSize:11,color:C.muted }}>{b.client}</span>
                           </div>
-                          <button onClick={()=>killBot(b.id)} title="Kill this bot"
-                            style={{ background:"rgba(255,30,60,.12)",border:"1px solid rgba(255,30,60,.3)",
-                              borderRadius:6,color:"#ff1e3c",fontWeight:700,fontSize:11,
-                              padding:"3px 10px",cursor:"pointer" }}>⚡ Kill</button>
+                          <div style={{ display:"flex",gap:6 }}>
+                            {b.status === "RUNNING" ? (
+                              <Btn variant="ghost" disabled={!!botsBusy[b.id]}
+                                onClick={()=>stopBot(b.id)}
+                                style={{ padding:"3px 10px",fontSize:11 }}>
+                                {botsBusy[b.id]==="stopping" ? "Stopping…" : "■ Stop"}
+                              </Btn>
+                            ) : (
+                              <Btn variant="success" disabled={!!botsBusy[b.id]}
+                                onClick={()=>startBot(b.id)}
+                                style={{ padding:"3px 10px",fontSize:11 }}>
+                                {botsBusy[b.id]==="starting" ? "Starting…" : "▶ Start"}
+                              </Btn>
+                            )}
+                            <button onClick={()=>killBot(b.id)} title="Kill this bot"
+                              style={{ background:"rgba(255,30,60,.12)",border:"1px solid rgba(255,30,60,.3)",
+                                borderRadius:6,color:"#ff1e3c",fontWeight:700,fontSize:11,
+                                padding:"3px 10px",cursor:"pointer" }}>⚡ Kill</button>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -1749,29 +2046,7 @@ export default function App() {
           {tab==="limits"    && <LimitTab clients={clients}/>}
           {tab==="demo"      && <DemoTab/>}
 
-          {/* ORDERS */}
-          {tab==="orders" && (
-            <div>
-              <div style={{ marginBottom:20 }}>
-                <h1 style={{ margin:0,fontSize:22,fontFamily:"'Syne',sans-serif",letterSpacing:"-.03em" }}>Order history</h1>
-                <p style={{ margin:"3px 0 0",fontSize:13,color:C.muted }}>All orders · IST timestamps</p>
-              </div>
-              <div style={{ display:"flex",gap:8,marginBottom:16 }}>
-                {["ALL","FILLED","OPEN","CANCELLED"].map(f=>(
-                  <button key={f} onClick={()=>setOrderFilter(f)} style={{
-                    padding:"6px 14px",borderRadius:7,border:`1px solid`,
-                    borderColor:orderFilter===f?C.blue:C.hint,
-                    background:orderFilter===f?"rgba(66,133,255,.12)":"transparent",
-                    color:orderFilter===f?C.blue:C.muted,
-                    cursor:"pointer",fontSize:12,fontWeight:500,fontFamily:"inherit" }}>{f}</button>
-                ))}
-              </div>
-              <div style={{ ...sCard,textAlign:"center",padding:"40px",color:C.muted }}>
-                <div>Orders appear here once bots are running.</div>
-                <div style={{ fontSize:12,marginTop:6,opacity:.6 }}>Use Demo trade tab to see simulated order flow.</div>
-              </div>
-            </div>
-          )}
+          {tab==="orders" && <OrdersTab clients={clients} filter={orderFilter} onFilterChange={setOrderFilter} />}
         </div>
       </div>
 

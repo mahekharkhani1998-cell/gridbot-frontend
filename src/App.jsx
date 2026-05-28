@@ -528,12 +528,13 @@ function ScriptSearch({ exchange, value, onChange }) {
 const EXCHANGES_LIST = ["NSE_EQ","BSE_EQ","NSE_FNO","NSE_CURRENCY","MCX_COMM"];
 const PRODUCT_TYPES  = ["CNC","INTRADAY","MARGIN","MTF","CO","BO"];
 const BROKERS = [
-  "Dhan","Zerodha","Angel One","Upstox","Fyers","5Paisa","Groww",
+  "Dhan","Definedge","Zerodha","Angel One","Upstox","Fyers","5Paisa","Groww",
   "ICICI Direct","HDFC Securities","Kotak Securities","Sharekhan",
   "Motilal Oswal","Edelweiss","Paytm Money","IIFL Securities",
 ];
 const BROKER_FIELDS = {
   "Dhan":           [{k:"client_id",l:"Client ID"},{k:"access_token",l:"Access Token"},{k:"totp_secret",l:"TOTP Secret (for auto daily refresh)"}],
+  "Definedge":      [{k:"api_token",l:"API Token"},{k:"api_secret",l:"API Secret"},{k:"totp_secret",l:"TOTP Secret (for auto daily login)"}],
   "Zerodha":        [{k:"client_id",l:"Client ID"},{k:"api_key",l:"API Key"},{k:"api_secret",l:"API Secret"},{k:"totp_secret",l:"TOTP Secret"}],
   "Angel One":      [{k:"client_id",l:"Client ID"},{k:"api_key",l:"API Key"},{k:"totp_secret",l:"TOTP Secret"}],
   "Upstox":         [{k:"client_id",l:"Client ID"},{k:"api_key",l:"API Key"},{k:"api_secret",l:"API Secret"},{k:"totp_secret",l:"TOTP Secret"}],
@@ -806,7 +807,8 @@ function AddClientForm({ onAdd, onClose, editData=null }) {
       <div style={{ display:"flex",justifyContent:"flex-end",gap:10,borderTop:`1px solid ${C.border}`,paddingTop:16 }}>
         <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
         <Btn onClick={()=>{
-          if(!form.name||!form.credentials.client_id) return;
+          const reqKey = (BROKER_FIELDS[form.broker]||[])[0]?.k;
+          if(!form.name || (reqKey && !form.credentials[reqKey])) return;
           onAdd({
             id: editData?.id || null,
             ...form,
@@ -816,7 +818,7 @@ function AddClientForm({ onAdd, onClose, editData=null }) {
             pnl: editData?.pnl||0,
           });
           onClose();
-        }} disabled={!form.name||!form.credentials.client_id}>
+        }} disabled={!form.name || (() => { const k=(BROKER_FIELDS[form.broker]||[])[0]?.k; return k ? !form.credentials[k] : false; })()}>
           {editData?"Save changes":"Add client"}
         </Btn>
       </div>

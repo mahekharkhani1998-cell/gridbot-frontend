@@ -2149,7 +2149,7 @@ function SingleOrderTab({ clients }) {
         <label style={sLbl}>Client</label>
         <select value={selClient} onChange={e=>setSelClient(e.target.value)} style={sInp}>
           {clients.length === 0 && <option value="">No clients available</option>}
-          {clients.map(c => <option key={c.id} value={c.id}>{c.name} · {c.broker} · {c.credentials?.client_id}</option>)}
+          {clients.map(c => <option key={c.id} value={c.id}>{c.name} · {c.broker}{c.broker==="Dhan" && c.credentials?.client_id ? ` · ${c.credentials.client_id}` : ""}</option>)}
         </select>
       </div>
 

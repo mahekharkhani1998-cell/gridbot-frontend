@@ -2827,7 +2827,7 @@ export default function App() {
                           </div>
                           <div>
                             <div style={{ fontWeight:600,fontSize:15 }}>{c.name}</div>
-                            <div style={{ fontSize:12,color:C.muted }}>{c.broker} · {c.credentials?.client_id}</div>
+                            <div style={{ fontSize:12,color:C.muted }}>{c.broker}{c.broker==="Dhan" && c.credentials?.client_id ? ` · ${c.credentials.client_id}` : ""}</div>
                           </div>
                         </div>
                         <div style={{ display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end" }}>

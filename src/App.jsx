@@ -426,7 +426,7 @@ function Modal({ open, onClose, children, width=680 }) {
 // ═══════════════════════════════════════════════════════════════════════
 //  SCRIPT SEARCH
 // ═══════════════════════════════════════════════════════════════════════
-function ScriptSearch({ exchange, value, onChange }) {
+function ScriptSearch({ exchange, value, onChange, broker = "dhan" }) {
   const [q, setQ] = useState(value?.name || "");
   const [open, setOpen] = useState(false);
   const [results, setResults] = useState([]);
@@ -442,7 +442,7 @@ function ScriptSearch({ exchange, value, onChange }) {
     const myReq = ++reqId.current;
     setLoading(true);
     const t = setTimeout(async () => {
-      const data = await apiCall("GET", `/api/market/scripts?exchange=${encodeURIComponent(exchange)}&q=${encodeURIComponent(q)}&limit=25`);
+      const data = await apiCall("GET", `/api/market/scripts?broker=${encodeURIComponent(broker)}&exchange=${encodeURIComponent(exchange)}&q=${encodeURIComponent(q)}&limit=25`);
       if (reqId.current !== myReq) return; // stale response
       if (data?.ok && Array.isArray(data.scripts)) {
         setResults(data.scripts.map(s => ({
@@ -465,7 +465,7 @@ function ScriptSearch({ exchange, value, onChange }) {
       setLoading(false);
     }, 180);
     return () => clearTimeout(t);
-  }, [q, exchange, open]);
+  }, [q, exchange, open, broker]);
 
   useEffect(()=>{
     const h=(e)=>{ if(ref.current&&!ref.current.contains(e.target)) setOpen(false); };
@@ -1844,7 +1844,7 @@ const PRODUCT_BY_SEGMENT = {
   MCX_COMM:     ["INTRADAY", "MARGIN"],
 };
 
-function OrderForm({ value, onChange, idx = 0, onRemove = null }) {
+function OrderForm({ value, onChange, idx = 0, onRemove = null, broker = "dhan" }) {
   const [exchange, setExchange]   = useState(value?.exchange || "NSE_EQ");
   const [side, setSide]           = useState(value?.side || "BUY");
   const [orderType, setOrderType] = useState(value?.order_type || "LIMIT");
@@ -1867,6 +1867,11 @@ function OrderForm({ value, onChange, idx = 0, onRemove = null }) {
     if (!allowed.includes(product)) setProduct(allowed[0]);
     // eslint-disable-next-line
   }, [exchange]);
+  // Reset selected script when broker changes (a Dhan symbol isn't valid for Definedge)
+  useEffect(() => {
+    setScript(null);
+    // eslint-disable-next-line
+  }, [broker]);
 
   // Push payload up whenever anything changes
   useEffect(() => {
@@ -1934,7 +1939,7 @@ function OrderForm({ value, onChange, idx = 0, onRemove = null }) {
 
         <div style={{ gridColumn:"span 2",minWidth:240 }}>
           <label style={sLbl}>Symbol</label>
-          <ScriptSearch exchange={exchange} value={script} onChange={setScript} />
+          <ScriptSearch exchange={exchange} value={script} onChange={setScript} broker={broker} />
         </div>
 
         <div>
@@ -2153,7 +2158,8 @@ function SingleOrderTab({ clients }) {
         </select>
       </div>
 
-      <OrderForm value={null} onChange={setPayload} idx={0} />
+      <OrderForm value={null} onChange={setPayload} idx={0}
+        broker={(clients.find(c => c.id === selClient)?.broker || "dhan").toLowerCase()} />
 
       <div style={{ marginTop:18,display:"flex",justifyContent:"flex-end",gap:10 }}>
         <Btn onClick={place} disabled={!canPlace || placing}
